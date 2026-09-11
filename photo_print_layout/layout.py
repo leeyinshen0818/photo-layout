@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .crop import CropState, SourceRect, crop_source_rect
-from .models import LayoutSettings, Position, RectMM, ResizeMode
+from .models import PHYSICAL_TOLERANCE_MM, LayoutSettings, Position, RectMM, ResizeMode
 
 @dataclass(frozen=True)
 class PhysicalLayout:
@@ -22,7 +22,10 @@ class PhysicalLayout:
 def photo_fits_on_paper(settings: LayoutSettings) -> bool:
     paper = settings.paper_size_mm
     photo = settings.photo_size_mm
-    return photo.width <= paper.width and photo.height <= paper.height
+    return (
+        photo.width <= paper.width + PHYSICAL_TOLERANCE_MM
+        and photo.height <= paper.height + PHYSICAL_TOLERANCE_MM
+    )
 
 
 def calculate_layout(

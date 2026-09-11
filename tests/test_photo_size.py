@@ -14,6 +14,7 @@ from photo_print_layout.models import (
     Orientation,
     ResizeMode,
     SizeMM,
+    SUPER_A3,
     Unit,
     from_millimetres,
     orientation_for_dimensions,
@@ -60,6 +61,40 @@ class PhotoSizeModelTests(unittest.TestCase):
         self.assertFalse(photo_fits_on_paper(LayoutSettings(photo_size_mm=SizeMM(300, 430))))
         self.assertFalse(photo_fits_on_paper(LayoutSettings(photo_size_mm=SizeMM(500, 400))))
 
+    def test_a3_plus_accepts_exact_13_by_19_boundary_in_both_orientations(self):
+        for size in (
+            SizeMM(to_millimetres(13, Unit.INCHES), to_millimetres(19, Unit.INCHES)),
+            SizeMM(to_millimetres(19, Unit.INCHES), to_millimetres(13, Unit.INCHES)),
+            SizeMM(to_millimetres(33.02, Unit.CENTIMETRES), to_millimetres(48.26, Unit.CENTIMETRES)),
+            SizeMM(330.2, 482.6),
+        ):
+            self.assertTrue(photo_fits_on_paper(LayoutSettings(paper=SUPER_A3, photo_size_mm=size)))
+
+    def test_a3_plus_rejects_genuinely_oversized_targets(self):
+        for width, height in ((13.01, 19), (13, 19.01), (13.1, 19)):
+            size = SizeMM(
+                to_millimetres(width, Unit.INCHES),
+                to_millimetres(height, Unit.INCHES),
+            )
+            self.assertFalse(
+                photo_fits_on_paper(LayoutSettings(paper=SUPER_A3, photo_size_mm=size))
+            )
+        self.assertFalse(
+            photo_fits_on_paper(
+                LayoutSettings(paper=SUPER_A3, photo_size_mm=SizeMM(331, 483))
+            )
+        )
+
+    def test_standard_a3_exact_boundaries_and_small_tolerance(self):
+        self.assertTrue(photo_fits_on_paper(LayoutSettings(photo_size_mm=SizeMM(297, 420))))
+        self.assertTrue(photo_fits_on_paper(LayoutSettings(photo_size_mm=SizeMM(420, 297))))
+        self.assertTrue(
+            photo_fits_on_paper(LayoutSettings(photo_size_mm=SizeMM(297.0000005, 420)))
+        )
+        self.assertFalse(
+            photo_fits_on_paper(LayoutSettings(photo_size_mm=SizeMM(297.00001, 420)))
+        )
+
     def test_custom_crop_ratio_is_not_hard_coded(self):
         crop = crop_source_rect(CropState(), 2000, 3000, 8, 10)
         square = crop_source_rect(CropState(), 2000, 3000, 20, 20)
@@ -86,6 +121,39 @@ class PhotoSizeUiTests(unittest.TestCase):
         self.assertAlmostEqual(self.window.width_spin.value(), 11.0)
         self.assertAlmostEqual(self.window.height_spin.value(), 14.0)
         self.assertFalse(hasattr(self.window, "photo_size_combo"))
+        self.assertEqual(self.window.width_label.text(), "Width")
+        self.assertEqual(self.window.height_label.text(), "Height")
+        self.assertEqual(self.window.max_size_label.text(), "Max: 11.69 × 16.54 in")
+
+    def test_maximum_label_tracks_paper_orientation_and_unit(self):
+        self.window.width_spin.setValue(14)
+        self.window.height_spin.setValue(11)
+        self.assertEqual(self.window.max_size_label.text(), "Max: 16.54 × 11.69 in")
+
+        self.window.paper_combo.setCurrentIndex(self.window.paper_combo.findData(SUPER_A3))
+        self.assertEqual(self.window.max_size_label.text(), "Max: 19 × 13 in")
+        self._select_unit(Unit.CENTIMETRES)
+        self.assertEqual(self.window.max_size_label.text(), "Max: 48.26 × 33.02 cm")
+
+        self.window.width_spin.setValue(33.02)
+        self.window.height_spin.setValue(48.26)
+        self.assertEqual(self.window.max_size_label.text(), "Max: 33.02 × 48.26 cm")
+        self._select_unit(Unit.MILLIMETRES)
+        self.assertEqual(self.window.max_size_label.text(), "Max: 330.2 × 482.6 mm")
+
+    def test_a3_plus_boundary_is_valid_in_each_display_unit(self):
+        self.window.set_photo(dummy_photo())
+        self.window.paper_combo.setCurrentIndex(self.window.paper_combo.findData(SUPER_A3))
+        for unit, width, height in (
+            (Unit.INCHES, 13, 19),
+            (Unit.CENTIMETRES, 33.02, 48.26),
+            (Unit.MILLIMETRES, 330.2, 482.6),
+        ):
+            self._select_unit(unit)
+            self.window.width_spin.setValue(width)
+            self.window.height_spin.setValue(height)
+            self.assertTrue(photo_fits_on_paper(self.window._settings), unit.value)
+            self.assertTrue(self.window.output_button.isEnabled(), unit.value)
 
     def test_loaded_image_orients_default_size_once(self):
         self.window.set_photo(dummy_photo("portrait.png", 200, 400))

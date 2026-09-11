@@ -15,8 +15,8 @@ class LayoutTests(unittest.TestCase):
     def test_center_position_is_exact(self):
         settings = LayoutSettings(paper=SUPER_A3, position=Position.CENTER)
         layout = calculate_layout(settings)
-        self.assertAlmostEqual(layout.target.x, (329.0 - 279.4) / 2)
-        self.assertAlmostEqual(layout.target.y, (483.0 - 355.6) / 2)
+        self.assertAlmostEqual(layout.target.x, (330.2 - 279.4) / 2)
+        self.assertAlmostEqual(layout.target.y, (482.6 - 355.6) / 2)
 
     def test_landscape_source_is_center_cropped(self):
         layout = calculate_layout(LayoutSettings(resize_mode=ResizeMode.CROP), 4000, 2000)
@@ -47,7 +47,7 @@ class LayoutTests(unittest.TestCase):
         super_layout = calculate_layout(
             LayoutSettings(paper=SUPER_A3, photo_size_mm=SizeMM(14 * 25.4, 11 * 25.4))
         )
-        self.assertEqual((super_layout.paper.width, super_layout.paper.height), (483.0, 329.0))
+        self.assertEqual((super_layout.paper.width, super_layout.paper.height), (482.6, 330.2))
 
 
 if __name__ == "__main__":

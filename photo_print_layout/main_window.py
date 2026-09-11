@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -38,6 +39,7 @@ from .models import (
     ResizeMode,
     SizeMM,
     Unit,
+    format_physical_value,
     from_millimetres,
     layout_orientation_for_dimensions,
     to_millimetres,
@@ -115,8 +117,9 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.photo_info)
 
         controls_layout.addWidget(self._section_label("Photo Size"))
-        size_row = QHBoxLayout()
-        size_row.setSpacing(6)
+        size_grid = QGridLayout()
+        size_grid.setHorizontalSpacing(6)
+        size_grid.setVerticalSpacing(3)
         self.width_spin = PhysicalSizeSpinBox()
         self.width_spin.setAccessibleName("Photo width")
         self.width_spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
@@ -131,11 +134,23 @@ class MainWindow(QMainWindow):
         self.unit_combo.setFixedWidth(58)
         for unit in Unit:
             self.unit_combo.addItem(unit.value, unit)
-        size_row.addWidget(self.width_spin)
-        size_row.addWidget(QLabel("×"))
-        size_row.addWidget(self.height_spin)
-        size_row.addWidget(self.unit_combo)
-        controls_layout.addLayout(size_row)
+        self.width_label = QLabel("Width")
+        self.width_label.setObjectName("dimensionLabel")
+        self.height_label = QLabel("Height")
+        self.height_label.setObjectName("dimensionLabel")
+        unit_label = QLabel("Unit")
+        unit_label.setObjectName("dimensionLabel")
+        size_grid.addWidget(self.width_label, 0, 0)
+        size_grid.addWidget(self.height_label, 0, 2)
+        size_grid.addWidget(unit_label, 0, 3)
+        size_grid.addWidget(self.width_spin, 1, 0)
+        size_grid.addWidget(QLabel("×"), 1, 1)
+        size_grid.addWidget(self.height_spin, 1, 2)
+        size_grid.addWidget(self.unit_combo, 1, 3)
+        controls_layout.addLayout(size_grid)
+        self.max_size_label = QLabel()
+        self.max_size_label.setObjectName("maxSizeLabel")
+        controls_layout.addWidget(self.max_size_label)
         self.size_error = QLabel()
         self.size_error.setObjectName("sizeError")
         self.size_error.setWordWrap(True)
@@ -143,6 +158,7 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.size_error)
         self._configure_size_inputs(self._display_unit)
         self._set_size_controls_from_mm(self._settings.photo_size_mm)
+        self._update_max_size_label()
         self.width_spin.valueChanged.connect(self._photo_size_changed)
         self.height_spin.valueChanged.connect(self._photo_size_changed)
         self.unit_combo.currentIndexChanged.connect(self._unit_changed)
@@ -189,7 +205,7 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.output_button)
         controls_layout.addStretch()
 
-        phase_note = QLabel("Phase 3 · Custom physical sizing\nPrinting remains unavailable.")
+        phase_note = QLabel("Phase 3.1 · Paper-aware sizing\nPrinting remains unavailable.")
         phase_note.setObjectName("phaseNote")
         phase_note.setWordWrap(True)
         controls_layout.addWidget(phase_note)
@@ -265,6 +281,7 @@ class MainWindow(QMainWindow):
         finally:
             self._updating_size_controls = False
         self.statusBar().showMessage(f"Photo size shown in {unit.value}", 2500)
+        self._update_max_size_label()
 
     def _photo_size_changed(self) -> None:
         if self._updating_size_controls:
@@ -323,6 +340,7 @@ class MainWindow(QMainWindow):
         return self._default_crop_for_current_size()
 
     def _update_size_validity(self) -> None:
+        self._update_max_size_label()
         valid = photo_fits_on_paper(self._settings)
         message = None if valid else "Photo size is larger than the selected paper."
         self.size_error.setText(message or "")
@@ -331,6 +349,16 @@ class MainWindow(QMainWindow):
         self.clear_button.setEnabled(self._photo is not None)
         self.output_button.setEnabled(self._photo is not None and valid)
         self._update_crop_button()
+
+    def _update_max_size_label(self) -> None:
+        paper = self._settings.paper_size_mm
+        width = from_millimetres(paper.width, self._display_unit)
+        height = from_millimetres(paper.height, self._display_unit)
+        self.max_size_label.setText(
+            f"Max: {format_physical_value(width, self._display_unit)} × "
+            f"{format_physical_value(height, self._display_unit)} "
+            f"{self._display_unit.value}"
+        )
 
     def _size_summary(self) -> str:
         return (
@@ -481,6 +509,8 @@ class MainWindow(QMainWindow):
             QLabel#fixedValue { padding: 5px 2px; color: #3e4652; }
             QLabel#phaseNote { color: #7b8492; font-size: 11px; }
             QLabel#sizeError { color: #b42318; font-size: 11px; }
+            QLabel#dimensionLabel { color: #687180; font-size: 10px; }
+            QLabel#maxSizeLabel { color: #687180; font-size: 11px; }
             QPushButton#primaryButton { background: #246bfd; color: white; border: 0; border-radius: 6px; padding: 9px 12px; font-weight: 600; }
             QPushButton#primaryButton:hover { background: #1758d5; }
             QPushButton#primaryButton:pressed { background: #1248af; }

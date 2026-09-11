@@ -1,6 +1,6 @@
 # Photo Print Layout Manager
 
-A focused Windows desktop utility for laying out a single photo on Standard A3 or A3+ paper. Phase 3 adds editable physical photo dimensions with inch, centimetre, and millimetre input while keeping one millimetre-based geometry model.
+A focused Windows desktop utility for laying out a single photo on Standard A3 or A3+ paper. Phase 3.1 provides editable physical dimensions, clear Width/Height fields, and live orientation-aware paper limits.
 
 ## Run
 
@@ -13,7 +13,7 @@ Use **Open Photo…** (or `Ctrl+O`) to choose a JPG, JPEG, PNG, or TIFF file. Lo
 
 The window starts maximized (with the normal Windows title bar). Before loading, the target defaults to 11×14 inches. A newly loaded portrait image starts at 11×14 and a landscape image at 14×11. Afterward, the entered width and height determine target and paper orientation; square targets consistently use portrait paper.
 
-Enter custom width and height directly and select `in`, `cm`, or `mm`. Changing units preserves the exact physical size. The app validates the requested size against the selected paper, reports oversized targets in the preview, and prevents invalid crop or output operations.
+Enter custom width and height directly and select `in`, `cm`, or `mm`. Changing units preserves the exact physical size. The current paper maximum is displayed below the fields and follows the target orientation and selected unit. Standard A3 uses its true `297 × 420 mm` dimensions; this application's A3+ workflow uses exactly `13 × 19 in` (`330.2 × 482.6 mm`). Oversized targets are reported in the preview and cannot be cropped or exported.
 
 **Fit Inside** is the safe default. Select **Crop to Size** after opening a photo to enable and highlight **Crop / Adjust…**. In the crop editor, drag inside the frame to move it, drag a blue corner to resize it, and drag in the dimmed image area (or right-drag) to reposition the image. The frame always follows the current custom width-to-height ratio.
 

@@ -47,7 +47,7 @@ class ExporterTests(unittest.TestCase):
         )
         self.assertEqual(
             paper_pixel_size(LayoutSettings(paper=SUPER_A3)),
-            (3886, 5705),
+            (3900, 5700),
         )
 
     def test_fit_export_uses_white_paper_and_center_position(self):

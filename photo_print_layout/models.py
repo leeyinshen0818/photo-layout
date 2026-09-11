@@ -7,6 +7,7 @@ from enum import Enum
 
 
 MM_PER_INCH = 25.4
+PHYSICAL_TOLERANCE_MM = 0.000001
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,11 @@ def from_millimetres(value_mm: float, unit: Unit) -> float:
     return round(value_mm, 10)
 
 
+def format_physical_value(value: float, unit: Unit) -> str:
+    decimals = 1 if unit is Unit.MILLIMETRES else 2
+    return f"{value:.{decimals}f}".rstrip("0").rstrip(".")
+
+
 def orientation_for_dimensions(width: float, height: float) -> Orientation:
     if width <= 0 or height <= 0:
         raise ValueError("Dimensions must be positive")
@@ -92,7 +98,7 @@ def layout_orientation_for_dimensions(width: float, height: float) -> Orientatio
 
 
 STANDARD_A3 = PaperSize("a3", "Standard A3", SizeMM(297.0, 420.0))
-SUPER_A3 = PaperSize("a3_plus", "A3+ / Super A3", SizeMM(329.0, 483.0))
+SUPER_A3 = PaperSize("a3_plus", "A3+ / Super A3", SizeMM(330.2, 482.6))
 PAPER_SIZES = (STANDARD_A3, SUPER_A3)
 
 DEFAULT_PHOTO_SIZE_MM = SizeMM(279.4, 355.6)
