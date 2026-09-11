@@ -19,7 +19,7 @@ class LayoutTests(unittest.TestCase):
         self.assertAlmostEqual(layout.target.y, (483.0 - 355.6) / 2)
 
     def test_landscape_source_is_center_cropped(self):
-        layout = calculate_layout(LayoutSettings(), 4000, 2000)
+        layout = calculate_layout(LayoutSettings(resize_mode=ResizeMode.CROP), 4000, 2000)
         self.assertAlmostEqual(layout.source.height, 2000)
         self.assertLess(layout.source.width, 4000)
         self.assertAlmostEqual(layout.source.x, (4000 - layout.source.width) / 2)
@@ -39,4 +39,3 @@ class LayoutTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

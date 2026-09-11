@@ -55,7 +55,9 @@ class ImageLoaderTests(unittest.TestCase):
             Image.new("RGB", (40, 20), "green").save(path)
             loaded = load_photo(path)
 
-            crop = calculate_layout(LayoutSettings(), loaded.width, loaded.height)
+            crop = calculate_layout(
+                LayoutSettings(resize_mode=ResizeMode.CROP), loaded.width, loaded.height
+            )
             fit = calculate_layout(
                 LayoutSettings(resize_mode=ResizeMode.FIT), loaded.width, loaded.height
             )

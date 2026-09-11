@@ -8,6 +8,7 @@ from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QComboBox,
+    QDialog,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -20,6 +21,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .crop import CropState
+from .crop_dialog import CropEditorDialog
 from .image_loader import ImageLoadError, LoadedPhoto, SUPPORTED_FILE_FILTER, load_photo
 from .models import PAPER_SIZES, PHOTO_SIZES, LayoutSettings, Position, ResizeMode
 from .preview import PreviewWidget
@@ -30,6 +33,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._settings = LayoutSettings()
         self._photo: LoadedPhoto | None = None
+        self._crop_state = CropState()
         self._preferences = QSettings()
 
         self.setWindowTitle("Photo Print Layout Manager")
@@ -100,13 +104,18 @@ class MainWindow(QMainWindow):
         self.resize_combo.currentIndexChanged.connect(self._controls_changed)
         form.addRow("Resize Mode", self.resize_combo)
 
+        self.crop_button = QPushButton("Crop / Adjust…")
+        self.crop_button.clicked.connect(self.open_crop_editor)
+        self.crop_button.setEnabled(False)
+        form.addRow("", self.crop_button)
+
         dpi_value = QLabel("300 DPI")
         dpi_value.setObjectName("fixedValue")
         form.addRow("Output", dpi_value)
         controls_layout.addLayout(form)
         controls_layout.addStretch()
 
-        phase_note = QLabel("Phase 1 · Preview only\nPrinting and crop adjustment come next.")
+        phase_note = QLabel("Phase 2 · Interactive crop preview\nPrinting remains unavailable.")
         phase_note.setObjectName("phaseNote")
         phase_note.setWordWrap(True)
         controls_layout.addWidget(phase_note)
@@ -146,6 +155,7 @@ class MainWindow(QMainWindow):
             resize_mode=self.resize_combo.currentData(),
         )
         self.preview.set_settings(self._settings)
+        self._update_crop_button()
         self.statusBar().showMessage(
             f"{self._settings.paper.label} · {self._settings.photo_size.label} · "
             f"{self._settings.position.value} · {self._settings.resize_mode.value}"
@@ -162,12 +172,40 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Unable to Open Photo", str(exc))
             return
 
+        self.set_photo(photo)
+        self._preferences.setValue("lastPhotoDirectory", str(photo.path.parent))
+        self.statusBar().showMessage(f"Loaded {photo.path.name}", 4000)
+
+    def set_photo(self, photo: LoadedPhoto) -> None:
+        """Install a new working photo and initialize its crop composition."""
+
         self._photo = photo
+        self._crop_state = CropState()
         self.photo_info.setText(photo.summary)
         self.photo_info.setToolTip(str(photo.path))
         self.preview.set_photo(photo)
-        self._preferences.setValue("lastPhotoDirectory", str(photo.path.parent))
-        self.statusBar().showMessage(f"Loaded {photo.path.name}", 4000)
+        self.preview.set_crop_state(self._crop_state)
+        self._update_crop_button()
+
+    def open_crop_editor(self) -> None:
+        if self._photo is None or self._settings.resize_mode is not ResizeMode.CROP:
+            return
+        dialog = CropEditorDialog(
+            self._photo,
+            self._settings.photo_size,
+            self._crop_state,
+            self,
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._crop_state = dialog.crop_state
+            self.preview.set_crop_state(self._crop_state)
+
+    def _update_crop_button(self) -> None:
+        enabled = self._photo is not None and self._settings.resize_mode is ResizeMode.CROP
+        self.crop_button.setEnabled(enabled)
+        self.crop_button.setToolTip(
+            "Adjust the crop composition" if enabled else "Select Crop to Size after opening a photo"
+        )
 
     def _apply_style(self) -> None:
         self.setStyleSheet(

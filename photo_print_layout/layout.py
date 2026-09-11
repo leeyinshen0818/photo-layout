@@ -8,18 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .crop import CropState, SourceRect, crop_source_rect
 from .models import LayoutSettings, Position, RectMM, ResizeMode
-
-
-@dataclass(frozen=True)
-class SourceRect:
-    """A rectangle in source-image pixels."""
-
-    x: float
-    y: float
-    width: float
-    height: float
-
 
 @dataclass(frozen=True)
 class PhysicalLayout:
@@ -33,6 +23,7 @@ def calculate_layout(
     settings: LayoutSettings,
     source_width: int | None = None,
     source_height: int | None = None,
+    crop_state: CropState | None = None,
 ) -> PhysicalLayout:
     """Calculate paper, target, image, and crop geometry in physical units."""
 
@@ -57,17 +48,13 @@ def calculate_layout(
     target_aspect = target.width / target.height
 
     if settings.resize_mode is ResizeMode.CROP:
-        if source_aspect > target_aspect:
-            crop_height = float(source_height)
-            crop_width = crop_height * target_aspect
-            crop_x = (source_width - crop_width) / 2.0
-            crop_y = 0.0
-        else:
-            crop_width = float(source_width)
-            crop_height = crop_width / target_aspect
-            crop_x = 0.0
-            crop_y = (source_height - crop_height) / 2.0
-        source = SourceRect(crop_x, crop_y, crop_width, crop_height)
+        source = crop_source_rect(
+            crop_state or CropState(),
+            source_width,
+            source_height,
+            target.width,
+            target.height,
+        )
         image = target
     else:
         source = SourceRect(0.0, 0.0, float(source_width), float(source_height))
@@ -85,4 +72,3 @@ def calculate_layout(
         )
 
     return PhysicalLayout(paper, target, image, source)
-

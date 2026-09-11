@@ -48,8 +48,8 @@ class Position(Enum):
 
 
 class ResizeMode(Enum):
-    CROP = "Crop to Size"
     FIT = "Fit Inside"
+    CROP = "Crop to Size"
 
 
 STANDARD_A3 = PaperSize("a3", "Standard A3", SizeMM(297.0, 420.0))
@@ -65,6 +65,5 @@ class LayoutSettings:
     paper: PaperSize = STANDARD_A3
     photo_size: PhotoSize = PHOTO_11X14
     position: Position = Position.LEFT_TOP
-    resize_mode: ResizeMode = ResizeMode.CROP
+    resize_mode: ResizeMode = ResizeMode.FIT
     dpi: int = 300
-

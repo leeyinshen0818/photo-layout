@@ -6,6 +6,7 @@ from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
+from .crop import CropState
 from .image_loader import LoadedPhoto
 from .layout import PhysicalLayout, calculate_layout
 from .models import LayoutSettings
@@ -16,6 +17,7 @@ class PreviewWidget(QWidget):
         super().__init__(parent)
         self._settings = LayoutSettings()
         self._photo: LoadedPhoto | None = None
+        self._crop_state = CropState()
         self.setMinimumSize(440, 520)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setAccessibleName("Paper layout preview")
@@ -28,9 +30,18 @@ class PreviewWidget(QWidget):
         self._photo = photo
         self.update()
 
+    def set_crop_state(self, crop_state: CropState) -> None:
+        self._crop_state = crop_state
+        self.update()
+
     def _layout(self) -> PhysicalLayout:
         if self._photo:
-            return calculate_layout(self._settings, self._photo.width, self._photo.height)
+            return calculate_layout(
+                self._settings,
+                self._photo.width,
+                self._photo.height,
+                self._crop_state,
+            )
         return calculate_layout(self._settings)
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt API name
@@ -83,4 +94,3 @@ class PreviewWidget(QWidget):
         else:
             painter.setPen(QColor("#7b8492"))
             painter.drawText(target_rect, Qt.AlignmentFlag.AlignCenter, "11 × 14\nOpen a photo to preview")
-
