@@ -14,7 +14,11 @@ a = Analysis(
         (
             str(project_root / "photo_print_layout" / "assets" / "chevron-down.svg"),
             "photo_print_layout/assets",
-        )
+        ),
+        (
+            str(project_root / "logo" / "Photo_Layout.ico"),
+            "logo",
+        ),
     ],
     hiddenimports=[],
     hookspath=[],
@@ -75,5 +79,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(project_root / "logo" / "Photo_Layout.ico"),
     version=str(project_root / "packaging" / "windows_version_info.txt"),
 )
