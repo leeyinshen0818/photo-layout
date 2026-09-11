@@ -29,6 +29,26 @@ The interface keeps one stable sidebar-and-preview layout across common Windows 
 python -m unittest discover -s tests -v
 ```
 
+## Standalone Windows build
+
+Install the build dependency once on the build machine, then run the release script:
+
+```powershell
+python -m pip install -r requirements-build.txt
+.\build_release.ps1
+```
+
+The PyInstaller specification produces one windowed executable at `dist\PhotoPrintLayoutManager.exe`. PySide6, Pillow, Qt platform/image-format plugins, Python, and the combo-box SVG are embedded; no adjacent runtime folder is required. The executable extracts its private runtime to the user's temporary directory when launched, which is normal for PyInstaller one-file applications.
+
+Maintainers can run the packaged functional check with:
+
+```powershell
+.\dist\PhotoPrintLayoutManager.exe --release-smoke-test
+if ($LASTEXITCODE -ne 0) { throw "Release smoke test failed" }
+```
+
+Build on Windows for Windows. The executable is unsigned, so Windows SmartScreen may warn until a trusted code-signing certificate is added to the release process.
+
 ## Structure
 
 - `photo_print_layout/models.py` — millimetre-based paper/photo settings and unit conversion

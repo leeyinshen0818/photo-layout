@@ -9,6 +9,7 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 from .main_window import MainWindow
+from .release_smoke import run_release_smoke_test
 
 
 def main() -> int:
@@ -21,6 +22,9 @@ def main() -> int:
     app.setApplicationName("Photo Print Layout Manager")
     app.setOrganizationName("Photo Print Layout Manager")
     app.setStyle("Fusion")
+
+    if "--release-smoke-test" in sys.argv:
+        return run_release_smoke_test()
 
     window = MainWindow()
     window.showMaximized()
