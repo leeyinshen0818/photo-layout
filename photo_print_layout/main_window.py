@@ -157,7 +157,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            photo = load_photo(path)
+            photo = load_photo(path, self._settings.photo_size)
         except ImageLoadError as exc:
             QMessageBox.warning(self, "Unable to Open Photo", str(exc))
             return
@@ -198,4 +198,3 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API name
         self._preferences.setValue("windowGeometry", self.saveGeometry())
         super().closeEvent(event)
-

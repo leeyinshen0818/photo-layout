@@ -16,6 +16,5 @@ def main() -> int:
     app.setStyle("Fusion")
 
     window = MainWindow()
-    window.show()
+    window.showMaximized()
     return app.exec()
-
