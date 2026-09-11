@@ -1,7 +1,7 @@
 import unittest
 
 from photo_print_layout.layout import calculate_layout
-from photo_print_layout.models import LayoutSettings, Position, ResizeMode, SUPER_A3
+from photo_print_layout.models import LayoutSettings, Orientation, Position, ResizeMode, SUPER_A3
 
 
 class LayoutTests(unittest.TestCase):
@@ -35,6 +35,19 @@ class LayoutTests(unittest.TestCase):
         self.assertAlmostEqual(
             layout.image.y, layout.target.y + (layout.target.height - layout.image.height) / 2
         )
+
+    def test_landscape_orientation_rotates_paper_and_photo_target(self):
+        settings = LayoutSettings(orientation=Orientation.LANDSCAPE)
+        layout = calculate_layout(settings, 4000, 2000)
+        self.assertEqual((layout.paper.width, layout.paper.height), (420.0, 297.0))
+        self.assertAlmostEqual(layout.target.width, 14 * 25.4)
+        self.assertAlmostEqual(layout.target.height, 11 * 25.4)
+        self.assertGreater(layout.paper.width, layout.paper.height)
+        self.assertAlmostEqual(layout.target.width / layout.target.height, 14 / 11)
+        super_layout = calculate_layout(
+            LayoutSettings(paper=SUPER_A3, orientation=Orientation.LANDSCAPE)
+        )
+        self.assertEqual((super_layout.paper.width, super_layout.paper.height), (483.0, 329.0))
 
 
 if __name__ == "__main__":

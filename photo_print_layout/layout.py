@@ -27,8 +27,8 @@ def calculate_layout(
 ) -> PhysicalLayout:
     """Calculate paper, target, image, and crop geometry in physical units."""
 
-    paper_size = settings.paper.size_mm
-    target_size = settings.photo_size.size_mm
+    paper_size = settings.paper_size_mm
+    target_size = settings.photo_size_mm
     if target_size.width > paper_size.width or target_size.height > paper_size.height:
         raise ValueError("The selected photo size does not fit on the selected paper")
 

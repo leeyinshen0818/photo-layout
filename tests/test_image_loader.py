@@ -9,23 +9,24 @@ from photo_print_layout.image_loader import (
     ImageOrientation,
     image_orientation,
     load_photo,
-    needs_layout_rotation,
 )
 from photo_print_layout.layout import calculate_layout
-from photo_print_layout.models import LayoutSettings, ResizeMode
+from photo_print_layout.models import (
+    LayoutSettings,
+    Orientation,
+    ResizeMode,
+    layout_orientation_for_dimensions,
+)
 
 
 class ImageLoaderTests(unittest.TestCase):
-    def test_orientation_helper_handles_all_pairings_and_squares(self):
+    def test_orientation_helper_handles_portrait_landscape_and_square(self):
         self.assertEqual(image_orientation(20, 40), ImageOrientation.PORTRAIT)
         self.assertEqual(image_orientation(40, 20), ImageOrientation.LANDSCAPE)
         self.assertEqual(image_orientation(20, 20), ImageOrientation.SQUARE)
-        self.assertFalse(needs_layout_rotation(20, 40, 11, 14))
-        self.assertTrue(needs_layout_rotation(40, 20, 11, 14))
-        self.assertFalse(needs_layout_rotation(40, 20, 14, 11))
-        self.assertTrue(needs_layout_rotation(20, 40, 14, 11))
-        self.assertFalse(needs_layout_rotation(20, 20, 11, 14))
-        self.assertFalse(needs_layout_rotation(40, 20, 12, 12))
+        self.assertEqual(layout_orientation_for_dimensions(20, 40), Orientation.PORTRAIT)
+        self.assertEqual(layout_orientation_for_dimensions(40, 20), Orientation.LANDSCAPE)
+        self.assertEqual(layout_orientation_for_dimensions(20, 20), Orientation.PORTRAIT)
 
     def test_portrait_source_for_portrait_target_is_not_rotated(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -37,7 +38,7 @@ class ImageLoaderTests(unittest.TestCase):
             self.assertEqual((loaded.width, loaded.height), (20, 40))
             self.assertEqual(loaded.layout_rotation_degrees, 0)
 
-    def test_landscape_source_is_rotated_and_source_is_unchanged(self):
+    def test_landscape_source_keeps_orientation_and_source_is_unchanged(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "landscape.png"
             Image.new("RGB", (40, 20), "green").save(path)
@@ -45,8 +46,8 @@ class ImageLoaderTests(unittest.TestCase):
 
             loaded = load_photo(path)
 
-            self.assertEqual((loaded.width, loaded.height), (20, 40))
-            self.assertEqual(loaded.layout_rotation_degrees, 90)
+            self.assertEqual((loaded.width, loaded.height), (40, 20))
+            self.assertEqual(loaded.layout_rotation_degrees, 0)
             self.assertEqual(before, hashlib.sha256(path.read_bytes()).digest())
 
     def test_crop_and_fit_both_use_normalized_working_dimensions(self):
@@ -54,19 +55,24 @@ class ImageLoaderTests(unittest.TestCase):
             path = Path(directory) / "landscape.png"
             Image.new("RGB", (40, 20), "green").save(path)
             loaded = load_photo(path)
+            orientation = layout_orientation_for_dimensions(loaded.width, loaded.height)
 
             crop = calculate_layout(
-                LayoutSettings(resize_mode=ResizeMode.CROP), loaded.width, loaded.height
+                LayoutSettings(resize_mode=ResizeMode.CROP, orientation=orientation),
+                loaded.width,
+                loaded.height,
             )
             fit = calculate_layout(
-                LayoutSettings(resize_mode=ResizeMode.FIT), loaded.width, loaded.height
+                LayoutSettings(resize_mode=ResizeMode.FIT, orientation=orientation),
+                loaded.width,
+                loaded.height,
             )
 
-            self.assertEqual(crop.source.width, 20.0)
-            self.assertLess(crop.source.height, 40.0)
-            self.assertEqual((fit.source.width, fit.source.height), (20.0, 40.0))
-            self.assertAlmostEqual(fit.image.height, fit.target.height)
-            self.assertLess(fit.image.width, fit.target.width)
+            self.assertEqual(crop.source.height, 20.0)
+            self.assertLess(crop.source.width, 40.0)
+            self.assertEqual((fit.source.width, fit.source.height), (40.0, 20.0))
+            self.assertAlmostEqual(fit.image.width, fit.target.width)
+            self.assertLess(fit.image.height, fit.target.height)
 
     def test_exif_orientation_is_applied_without_modifying_source(self):
         with tempfile.TemporaryDirectory() as directory:

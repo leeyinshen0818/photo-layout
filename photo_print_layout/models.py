@@ -14,6 +14,14 @@ class SizeMM:
     width: float
     height: float
 
+    def for_orientation(self, orientation: "Orientation") -> "SizeMM":
+        """Return this portrait-defined size in the requested layout orientation."""
+
+        short, long = sorted((self.width, self.height))
+        if orientation is Orientation.LANDSCAPE:
+            return SizeMM(long, short)
+        return SizeMM(short, long)
+
 
 @dataclass(frozen=True)
 class RectMM:
@@ -52,6 +60,27 @@ class ResizeMode(Enum):
     CROP = "Crop to Size"
 
 
+class Orientation(Enum):
+    PORTRAIT = "portrait"
+    LANDSCAPE = "landscape"
+    SQUARE = "square"
+
+
+def orientation_for_dimensions(width: float, height: float) -> Orientation:
+    if width <= 0 or height <= 0:
+        raise ValueError("Dimensions must be positive")
+    if width == height:
+        return Orientation.SQUARE
+    return Orientation.LANDSCAPE if width > height else Orientation.PORTRAIT
+
+
+def layout_orientation_for_dimensions(width: float, height: float) -> Orientation:
+    """Map image dimensions to a paper orientation; square safely uses portrait."""
+
+    orientation = orientation_for_dimensions(width, height)
+    return Orientation.PORTRAIT if orientation is Orientation.SQUARE else orientation
+
+
 STANDARD_A3 = PaperSize("a3", "Standard A3", SizeMM(297.0, 420.0))
 SUPER_A3 = PaperSize("a3_plus", "A3+ / Super A3", SizeMM(329.0, 483.0))
 PAPER_SIZES = (STANDARD_A3, SUPER_A3)
@@ -67,3 +96,12 @@ class LayoutSettings:
     position: Position = Position.LEFT_TOP
     resize_mode: ResizeMode = ResizeMode.FIT
     dpi: int = 300
+    orientation: Orientation = Orientation.PORTRAIT
+
+    @property
+    def paper_size_mm(self) -> SizeMM:
+        return self.paper.size_mm.for_orientation(self.orientation)
+
+    @property
+    def photo_size_mm(self) -> SizeMM:
+        return self.photo_size.size_mm.for_orientation(self.orientation)

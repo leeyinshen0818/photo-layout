@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import replace
+from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QAction, QKeySequence
@@ -21,10 +23,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .crop import CropState
+from .crop import CropState, default_crop_state
 from .crop_dialog import CropEditorDialog
+from .exporter import ExportError, ensure_jpeg_extension, export_jpeg
 from .image_loader import ImageLoadError, LoadedPhoto, SUPPORTED_FILE_FILTER, load_photo
-from .models import PAPER_SIZES, PHOTO_SIZES, LayoutSettings, Position, ResizeMode
+from .models import (
+    PAPER_SIZES,
+    PHOTO_SIZES,
+    LayoutSettings,
+    Position,
+    Orientation,
+    ResizeMode,
+    layout_orientation_for_dimensions,
+)
 from .preview import PreviewWidget
 
 
@@ -33,7 +44,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._settings = LayoutSettings()
         self._photo: LoadedPhoto | None = None
-        self._crop_state = CropState()
+        self._crop_state: CropState | None = None
         self._preferences = QSettings()
 
         self.setWindowTitle("Photo Print Layout Manager")
@@ -68,7 +79,14 @@ class MainWindow(QMainWindow):
         open_button = QPushButton("Open Photo…")
         open_button.setObjectName("primaryButton")
         open_button.clicked.connect(self.open_photo)
-        controls_layout.addWidget(open_button)
+        self.clear_button = QPushButton("Clear")
+        self.clear_button.setEnabled(False)
+        self.clear_button.clicked.connect(self.clear_photo)
+        photo_buttons = QHBoxLayout()
+        photo_buttons.setSpacing(8)
+        photo_buttons.addWidget(open_button, 1)
+        photo_buttons.addWidget(self.clear_button)
+        controls_layout.addLayout(photo_buttons)
 
         self.photo_info = QLabel("No photo selected")
         self.photo_info.setObjectName("photoInfo")
@@ -105,17 +123,25 @@ class MainWindow(QMainWindow):
         form.addRow("Resize Mode", self.resize_combo)
 
         self.crop_button = QPushButton("Crop / Adjust…")
+        self.crop_button.setObjectName("cropButton")
+        self.crop_button.setProperty("cropActive", False)
         self.crop_button.clicked.connect(self.open_crop_editor)
         self.crop_button.setEnabled(False)
         form.addRow("", self.crop_button)
 
         dpi_value = QLabel("300 DPI")
         dpi_value.setObjectName("fixedValue")
-        form.addRow("Output", dpi_value)
+        form.addRow("Resolution", dpi_value)
         controls_layout.addLayout(form)
+
+        self.output_button = QPushButton("Output JPEG…")
+        self.output_button.setObjectName("outputButton")
+        self.output_button.setEnabled(False)
+        self.output_button.clicked.connect(self.output_jpeg)
+        controls_layout.addWidget(self.output_button)
         controls_layout.addStretch()
 
-        phase_note = QLabel("Phase 2 · Interactive crop preview\nPrinting remains unavailable.")
+        phase_note = QLabel("Phase 2.2 · JPEG layout output\nPrinting remains unavailable.")
         phase_note.setObjectName("phaseNote")
         phase_note.setWordWrap(True)
         controls_layout.addWidget(phase_note)
@@ -167,7 +193,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            photo = load_photo(path, self._settings.photo_size)
+            photo = load_photo(path)
         except ImageLoadError as exc:
             QMessageBox.warning(self, "Unable to Open Photo", str(exc))
             return
@@ -180,20 +206,101 @@ class MainWindow(QMainWindow):
         """Install a new working photo and initialize its crop composition."""
 
         self._photo = photo
-        self._crop_state = CropState()
+        self._settings = replace(
+            self._settings,
+            orientation=layout_orientation_for_dimensions(photo.width, photo.height),
+        )
+        target = self._settings.photo_size_mm
+        self._crop_state = default_crop_state(
+            photo.width, photo.height, target.width, target.height
+        )
         self.photo_info.setText(photo.summary)
         self.photo_info.setToolTip(str(photo.path))
         self.preview.set_photo(photo)
+        self.preview.set_settings(self._settings)
         self.preview.set_crop_state(self._crop_state)
+        self.clear_button.setEnabled(True)
+        self.output_button.setEnabled(True)
         self._update_crop_button()
+
+    def clear_photo(self) -> None:
+        """Clear only image-specific state, preserving user layout selections."""
+
+        self._photo = None
+        self._crop_state = None
+        self._settings = replace(
+            self._settings,
+            orientation=Orientation.PORTRAIT,
+        )
+        self.photo_info.setText("No photo selected")
+        self.photo_info.setToolTip("")
+        self.preview.set_photo(None)
+        self.preview.set_settings(self._settings)
+        self.preview.set_crop_state(CropState())
+        self.clear_button.setEnabled(False)
+        self.output_button.setEnabled(False)
+        self._update_crop_button()
+        self.statusBar().showMessage("Image cleared", 3000)
+
+    def output_jpeg(self) -> None:
+        if self._photo is None:
+            return
+        last_directory = self._preferences.value(
+            "lastOutputDirectory", str(self._photo.path.parent)
+        )
+        suggested = str(Path(last_directory) / f"{self._photo.path.stem}_layout.jpg")
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "Output JPEG",
+            suggested,
+            "JPEG Image (*.jpg *.jpeg)",
+        )
+        if not selected:
+            return
+
+        output = ensure_jpeg_extension(selected)
+        if os.path.normcase(os.path.abspath(output)) == os.path.normcase(
+            os.path.abspath(self._photo.path)
+        ):
+            QMessageBox.warning(
+                self,
+                "Unable to Export JPEG",
+                "Choose a different filename so the original photo remains unchanged.",
+            )
+            return
+        try:
+            written = export_jpeg(
+                output,
+                self._photo,
+                self._settings,
+                self._crop_state
+                or default_crop_state(
+                    self._photo.width,
+                    self._photo.height,
+                    self._settings.photo_size_mm.width,
+                    self._settings.photo_size_mm.height,
+                ),
+            )
+        except (ExportError, OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Unable to Export JPEG", str(exc))
+            return
+
+        self._preferences.setValue("lastOutputDirectory", str(written.parent))
+        QMessageBox.information(self, "Output Complete", "JPEG exported successfully.")
 
     def open_crop_editor(self) -> None:
         if self._photo is None or self._settings.resize_mode is not ResizeMode.CROP:
             return
         dialog = CropEditorDialog(
             self._photo,
-            self._settings.photo_size,
-            self._crop_state,
+            self._settings.photo_size_mm,
+            self._crop_state
+            or default_crop_state(
+                self._photo.width,
+                self._photo.height,
+                self._settings.photo_size_mm.width,
+                self._settings.photo_size_mm.height,
+            ),
             self,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -203,6 +310,9 @@ class MainWindow(QMainWindow):
     def _update_crop_button(self) -> None:
         enabled = self._photo is not None and self._settings.resize_mode is ResizeMode.CROP
         self.crop_button.setEnabled(enabled)
+        self.crop_button.setProperty("cropActive", enabled)
+        self.crop_button.style().unpolish(self.crop_button)
+        self.crop_button.style().polish(self.crop_button)
         self.crop_button.setToolTip(
             "Adjust the crop composition" if enabled else "Select Crop to Size after opening a photo"
         )
@@ -222,6 +332,9 @@ class MainWindow(QMainWindow):
             QPushButton#primaryButton { background: #246bfd; color: white; border: 0; border-radius: 6px; padding: 9px 12px; font-weight: 600; }
             QPushButton#primaryButton:hover { background: #1758d5; }
             QPushButton#primaryButton:pressed { background: #1248af; }
+            QPushButton#cropButton { background: #e8ebef; color: #9299a4; border: 1px solid #d8dde4; border-radius: 6px; padding: 7px 10px; font-weight: 600; }
+            QPushButton#cropButton[cropActive="true"]:enabled { background: #246bfd; color: white; border-color: #246bfd; }
+            QPushButton#cropButton[cropActive="true"]:enabled:hover { background: #1758d5; }
             QComboBox { background: white; border: 1px solid #cbd1d9; border-radius: 5px; padding: 6px 8px; min-width: 135px; }
             QComboBox:hover { border-color: #8e98a7; }
             QStatusBar { background: #ffffff; color: #687180; }
