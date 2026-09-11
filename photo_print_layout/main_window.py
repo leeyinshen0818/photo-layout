@@ -8,7 +8,7 @@ from math import isclose
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QColor, QKeySequence, QPalette, QScreen, QShowEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
+    QSpacerItem,
     QVBoxLayout,
     QWidget,
 )
@@ -45,6 +47,7 @@ from .models import (
     to_millimetres,
 )
 from .preview import PreviewWidget
+from .ui_scale import UiMetrics, metrics_for_screen
 
 
 class PhysicalSizeSpinBox(QDoubleSpinBox):
@@ -55,8 +58,11 @@ class PhysicalSizeSpinBox(QDoubleSpinBox):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, ui_metrics: UiMetrics | None = None) -> None:
         super().__init__()
+        self._ui_metrics_override = ui_metrics is not None
+        self._ui_metrics = ui_metrics or metrics_for_screen()
+        self._screen_signal_connected = False
         self._settings = LayoutSettings()
         self._photo: LoadedPhoto | None = None
         self._crop_state: CropState | None = None
@@ -70,24 +76,20 @@ class MainWindow(QMainWindow):
         self._preferences = QSettings()
 
         self.setWindowTitle("Photo Print Layout Manager")
-        self.resize(900, 700)
-        self.setMinimumSize(760, 600)
         self._build_ui()
-        self._apply_style()
+        self._apply_ui_metrics(self._ui_metrics)
         self._restore_window_geometry()
 
     def _build_ui(self) -> None:
         central = QWidget()
         root = QHBoxLayout(central)
-        root.setContentsMargins(20, 20, 20, 20)
-        root.setSpacing(20)
+        self._root_layout = root
 
         controls = QFrame()
+        self._controls_panel = controls
         controls.setObjectName("controlsPanel")
-        controls.setFixedWidth(285)
         controls_layout = QVBoxLayout(controls)
-        controls_layout.setContentsMargins(20, 20, 20, 20)
-        controls_layout.setSpacing(14)
+        self._controls_layout = controls_layout
 
         title = QLabel("Photo Print Layout")
         title.setObjectName("title")
@@ -96,17 +98,23 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(title)
         controls_layout.addWidget(subtitle)
 
-        controls_layout.addSpacing(8)
+        self._title_spacer = QSpacerItem(
+            0,
+            self._ui_metrics.compact_spacing,
+            QSizePolicy.Policy.Minimum,
+            QSizePolicy.Policy.Fixed,
+        )
+        controls_layout.addItem(self._title_spacer)
         controls_layout.addWidget(self._section_label("Photo"))
-        open_button = QPushButton("Open Photo…")
-        open_button.setObjectName("primaryButton")
-        open_button.clicked.connect(self.open_photo)
+        self.open_button = QPushButton("Open Photo…")
+        self.open_button.setObjectName("primaryButton")
+        self.open_button.clicked.connect(self.open_photo)
         self.clear_button = QPushButton("Clear")
         self.clear_button.setEnabled(False)
         self.clear_button.clicked.connect(self.clear_photo)
         photo_buttons = QHBoxLayout()
-        photo_buttons.setSpacing(8)
-        photo_buttons.addWidget(open_button, 1)
+        self._photo_buttons_layout = photo_buttons
+        photo_buttons.addWidget(self.open_button, 1)
         photo_buttons.addWidget(self.clear_button)
         controls_layout.addLayout(photo_buttons)
 
@@ -118,20 +126,16 @@ class MainWindow(QMainWindow):
 
         controls_layout.addWidget(self._section_label("Photo Size"))
         size_grid = QGridLayout()
-        size_grid.setHorizontalSpacing(6)
-        size_grid.setVerticalSpacing(3)
+        self._size_grid = size_grid
         self.width_spin = PhysicalSizeSpinBox()
         self.width_spin.setAccessibleName("Photo width")
         self.width_spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
-        self.width_spin.setFixedWidth(70)
         self.height_spin = PhysicalSizeSpinBox()
         self.height_spin.setAccessibleName("Photo height")
         self.height_spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
-        self.height_spin.setFixedWidth(70)
         self.unit_combo = QComboBox()
         self.unit_combo.setObjectName("unitCombo")
         self.unit_combo.setAccessibleName("Photo size unit")
-        self.unit_combo.setFixedWidth(58)
         for unit in Unit:
             self.unit_combo.addItem(unit.value, unit)
         self.width_label = QLabel("Width")
@@ -164,8 +168,7 @@ class MainWindow(QMainWindow):
         self.unit_combo.currentIndexChanged.connect(self._unit_changed)
 
         form = QFormLayout()
-        form.setContentsMargins(0, 5, 0, 0)
-        form.setVerticalSpacing(13)
+        self._form_layout = form
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
 
         self.paper_combo = QComboBox()
@@ -206,7 +209,7 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.output_button)
         controls_layout.addStretch()
 
-        phase_note = QLabel("Phase 4 · Print-accurate rendering\nPrinting remains unavailable.")
+        phase_note = QLabel("Phase 5 · Responsive visual polish\nPrinting remains unavailable.")
         phase_note.setObjectName("phaseNote")
         phase_note.setWordWrap(True)
         controls_layout.addWidget(phase_note)
@@ -214,8 +217,7 @@ class MainWindow(QMainWindow):
         preview_panel = QFrame()
         preview_panel.setObjectName("previewPanel")
         preview_layout = QVBoxLayout(preview_panel)
-        preview_layout.setContentsMargins(0, 0, 0, 0)
-        preview_layout.setSpacing(8)
+        self._preview_layout = preview_layout
         preview_heading = QLabel("Preview")
         preview_heading.setObjectName("previewHeading")
         preview_layout.addWidget(preview_heading)
@@ -236,6 +238,10 @@ class MainWindow(QMainWindow):
         label = QLabel(text)
         label.setObjectName("sectionLabel")
         return label
+
+    @property
+    def ui_metrics(self) -> UiMetrics:
+        return self._ui_metrics
 
     def _controls_changed(self) -> None:
         self._settings = replace(
@@ -501,39 +507,158 @@ class MainWindow(QMainWindow):
             "Adjust the crop composition" if enabled else "Select Crop to Size after opening a photo"
         )
 
-    def _apply_style(self) -> None:
-        self.setStyleSheet(
-            """
-            QMainWindow, QWidget { background: #f7f8fa; color: #20242b; }
-            QFrame#controlsPanel { background: #ffffff; border: 1px solid #dfe3e8; border-radius: 10px; }
-            QLabel#title { font-size: 21px; font-weight: 700; }
-            QLabel#subtitle { color: #687180; font-size: 12px; }
-            QLabel#sectionLabel, QLabel#previewHeading { font-size: 13px; font-weight: 700; }
-            QLabel#previewHeading { font-size: 16px; }
-            QLabel#photoInfo { background: #f4f6f8; border-radius: 6px; padding: 9px; color: #596273; }
-            QLabel#fixedValue { padding: 5px 2px; color: #3e4652; }
-            QLabel#phaseNote { color: #7b8492; font-size: 11px; }
-            QLabel#sizeError { color: #b42318; font-size: 11px; }
-            QLabel#dimensionLabel { color: #687180; font-size: 10px; }
-            QLabel#maxSizeLabel { color: #687180; font-size: 11px; }
-            QPushButton#primaryButton { background: #246bfd; color: white; border: 0; border-radius: 6px; padding: 9px 12px; font-weight: 600; }
-            QPushButton#primaryButton:hover { background: #1758d5; }
-            QPushButton#primaryButton:pressed { background: #1248af; }
-            QPushButton#cropButton { background: #e8ebef; color: #9299a4; border: 1px solid #d8dde4; border-radius: 6px; padding: 7px 10px; font-weight: 600; }
-            QPushButton#cropButton[cropActive="true"]:enabled { background: #246bfd; color: white; border-color: #246bfd; }
-            QPushButton#cropButton[cropActive="true"]:enabled:hover { background: #1758d5; }
-            QPushButton#outputButton { background: #e8ebef; color: #9299a4; border: 1px solid #d8dde4; border-radius: 6px; padding: 9px 12px; font-weight: 700; }
-            QPushButton#outputButton[outputActive="true"]:enabled { background: #246bfd; color: white; border-color: #246bfd; }
-            QPushButton#outputButton[outputActive="true"]:enabled:hover { background: #1758d5; }
-            QPushButton#outputButton[outputActive="true"]:enabled:pressed { background: #1248af; }
-            QComboBox { background: white; border: 1px solid #cbd1d9; border-radius: 5px; padding: 6px 8px; min-width: 135px; }
-            QComboBox:hover { border-color: #8e98a7; }
-            QComboBox#unitCombo { min-width: 0; max-width: 58px; padding-left: 6px; }
-            QDoubleSpinBox { background: white; border: 1px solid #cbd1d9; border-radius: 5px; padding: 6px 7px; }
-            QDoubleSpinBox:focus { border-color: #246bfd; }
-            QStatusBar { background: #ffffff; color: #687180; }
+    def _apply_ui_metrics(self, metrics: UiMetrics, *, resize_window: bool = True) -> None:
+        """Apply one proportional metric set without changing layout structure."""
+
+        self._ui_metrics = metrics
+        px = metrics.px
+        if resize_window:
+            self.resize(px(900), px(700))
+        self.setMinimumSize(px(785), px(735))
+        self._root_layout.setContentsMargins(
+            metrics.outer_margin,
+            metrics.outer_margin,
+            metrics.outer_margin,
+            metrics.outer_margin,
+        )
+        self._root_layout.setSpacing(metrics.outer_margin)
+        self._controls_panel.setFixedWidth(metrics.sidebar_width)
+        self._controls_layout.setContentsMargins(
+            metrics.panel_padding,
+            metrics.panel_padding,
+            metrics.panel_padding,
+            metrics.panel_padding,
+        )
+        self._controls_layout.setSpacing(metrics.section_spacing)
+        self._title_spacer.changeSize(
+            0,
+            metrics.compact_spacing,
+            QSizePolicy.Policy.Minimum,
+            QSizePolicy.Policy.Fixed,
+        )
+        self._photo_buttons_layout.setSpacing(metrics.compact_spacing)
+        self._size_grid.setHorizontalSpacing(px(6))
+        self._size_grid.setVerticalSpacing(px(3))
+        self._form_layout.setContentsMargins(0, px(5), 0, 0)
+        self._form_layout.setVerticalSpacing(px(13))
+        self._preview_layout.setContentsMargins(0, 0, 0, 0)
+        self._preview_layout.setSpacing(metrics.compact_spacing)
+        self.width_spin.setFixedWidth(px(70))
+        self.height_spin.setFixedWidth(px(70))
+        self.unit_combo.setFixedWidth(px(58))
+        self.preview.setMinimumSize(px(440), px(520))
+        self.preview.set_ui_scale(metrics.scale)
+        self.photo_info.setMinimumHeight(px(42))
+
+        controls = (
+            self.findChildren(QPushButton)
+            + self.findChildren(QComboBox)
+            + self.findChildren(QDoubleSpinBox)
+        )
+        for widget in controls:
+            widget.setFixedHeight(metrics.control_height)
+
+        self._apply_style()
+        for combo in self.findChildren(QComboBox):
+            combo.setSizeAdjustPolicy(
+                QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+            )
+            combo.setMinimumContentsLength(4)
+            combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self._style_combo_popup(combo)
+
+    def _style_combo_popup(self, combo: QComboBox) -> None:
+        """Force a light popup palette even when Windows uses a dark menu theme."""
+
+        view = combo.view()
+        palette = view.palette()
+        palette.setColor(QPalette.ColorRole.Base, Qt.GlobalColor.white)
+        palette.setColor(QPalette.ColorRole.Window, Qt.GlobalColor.white)
+        palette.setColor(QPalette.ColorRole.Text, Qt.GlobalColor.black)
+        palette.setColor(QPalette.ColorRole.WindowText, Qt.GlobalColor.black)
+        palette.setColor(QPalette.ColorRole.Highlight, QColor("#e7efff"))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#173b7a"))
+        view.setPalette(palette)
+        view.setStyleSheet(
+            f"""
+            QAbstractItemView {{
+                background: #ffffff;
+                color: #20242b;
+                border: 1px solid #cbd1d9;
+                outline: 0;
+                padding: {self._ui_metrics.px(4)}px;
+                selection-background-color: #e7efff;
+                selection-color: #173b7a;
+            }}
+            QAbstractItemView::item {{
+                min-height: {self._ui_metrics.px(28, 22)}px;
+                padding: 0 {self._ui_metrics.px(7)}px;
+                border-radius: {self._ui_metrics.px(4)}px;
+            }}
+            QAbstractItemView::item:hover {{ background: #f1f5fb; }}
+            QAbstractItemView::item:selected {{ background: #e7efff; color: #173b7a; }}
             """
         )
+
+    def _apply_style(self) -> None:
+        metrics = self._ui_metrics
+        px = metrics.px
+        arrow_url = (Path(__file__).with_name("assets") / "chevron-down.svg").as_posix()
+        self.setStyleSheet(
+            f"""
+            QMainWindow, QWidget {{ background: #f7f8fa; color: #20242b; font-family: 'Segoe UI'; font-size: {px(12, 9)}px; }}
+            QFrame#controlsPanel {{ background: #ffffff; border: 1px solid #dfe3e8; border-radius: {px(10)}px; }}
+            QLabel {{ background: transparent; }}
+            QLabel#title {{ font-size: {px(21, 15)}px; font-weight: 700; }}
+            QLabel#subtitle {{ color: #687180; font-size: {px(12, 9)}px; }}
+            QLabel#sectionLabel, QLabel#previewHeading {{ font-size: {px(13, 10)}px; font-weight: 700; }}
+            QLabel#previewHeading {{ font-size: {px(16, 12)}px; }}
+            QLabel#photoInfo {{ background: #f4f6f8; border-radius: {metrics.radius}px; padding: {px(9)}px; color: #596273; }}
+            QLabel#fixedValue {{ padding: {px(5)}px {px(2)}px; color: #3e4652; }}
+            QLabel#phaseNote {{ color: #7b8492; font-size: {px(11, 9)}px; }}
+            QLabel#sizeError {{ color: #b42318; font-size: {px(11, 9)}px; }}
+            QLabel#dimensionLabel {{ color: #687180; font-size: {px(10, 9)}px; }}
+            QLabel#maxSizeLabel {{ color: #687180; font-size: {px(11, 9)}px; }}
+            QPushButton {{ background: #ffffff; color: #3e4652; border: 1px solid #cbd1d9; border-radius: {metrics.radius}px; padding: 0 {px(10)}px; font-weight: 600; }}
+            QPushButton:hover {{ background: #f4f6f8; border-color: #9aa4b2; }}
+            QPushButton:focus {{ border-color: #6f9cff; }}
+            QPushButton:disabled {{ background: #eef0f3; color: #9aa1ab; border-color: #dde1e6; }}
+            QPushButton#primaryButton {{ background: #246bfd; color: white; border: 1px solid #246bfd; border-radius: {metrics.radius}px; padding: 0 {px(12)}px; font-weight: 700; }}
+            QPushButton#primaryButton:hover {{ background: #1758d5; }}
+            QPushButton#primaryButton:pressed {{ background: #1248af; }}
+            QPushButton#cropButton {{ background: #eef0f3; color: #9aa1ab; border: 1px solid #dde1e6; border-radius: {metrics.radius}px; padding: 0 {px(10)}px; font-weight: 600; }}
+            QPushButton#cropButton[cropActive="true"]:enabled {{ background: #246bfd; color: white; border-color: #246bfd; }}
+            QPushButton#cropButton[cropActive="true"]:enabled:hover {{ background: #1758d5; }}
+            QPushButton#outputButton {{ background: #eef0f3; color: #9aa1ab; border: 1px solid #dde1e6; border-radius: {metrics.radius}px; padding: 0 {px(12)}px; font-weight: 700; }}
+            QPushButton#outputButton[outputActive="true"]:enabled {{ background: #246bfd; color: white; border-color: #246bfd; }}
+            QPushButton#outputButton[outputActive="true"]:enabled:hover {{ background: #1758d5; }}
+            QPushButton#outputButton[outputActive="true"]:enabled:pressed {{ background: #1248af; }}
+            QComboBox, QDoubleSpinBox {{ background: white; color: #20242b; border: 1px solid #cbd1d9; border-radius: {px(5)}px; padding: 0 {px(8)}px; selection-background-color: #dce8ff; selection-color: #173b7a; }}
+            QComboBox {{ min-width: {px(105)}px; padding-right: {px(28)}px; }}
+            QComboBox:hover {{ border-color: #8e98a7; }}
+            QComboBox:focus {{ border-color: #6f9cff; }}
+            QComboBox:disabled, QDoubleSpinBox:disabled {{ background: #eef0f3; color: #9aa1ab; border-color: #dde1e6; }}
+            QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: top right; width: {px(26)}px; border: 0; border-left: 1px solid #e1e5ea; }}
+            QComboBox::down-arrow {{ image: url("{arrow_url}"); width: {px(10)}px; height: {px(6)}px; }}
+            QComboBox#unitCombo {{ min-width: 0; max-width: {px(58)}px; padding-left: {px(6)}px; padding-right: {px(20)}px; }}
+            QDoubleSpinBox:focus {{ border-color: #246bfd; }}
+            QAbstractItemView {{ background: #ffffff; color: #20242b; border: 1px solid #cbd1d9; selection-background-color: #e7efff; selection-color: #173b7a; outline: 0; }}
+            QStatusBar {{ background: #ffffff; color: #687180; font-size: {px(11, 9)}px; }}
+            """
+        )
+
+    def _screen_changed(self, screen: QScreen) -> None:
+        if not self._ui_metrics_override:
+            self._apply_ui_metrics(metrics_for_screen(screen), resize_window=False)
+
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt API name
+        super().showEvent(event)
+        handle = self.windowHandle()
+        if handle and not self._screen_signal_connected:
+            handle.screenChanged.connect(self._screen_changed)
+            self._screen_signal_connected = True
+        if handle and not self._ui_metrics_override:
+            self._screen_changed(handle.screen())
 
     def _restore_window_geometry(self) -> None:
         geometry = self._preferences.value("windowGeometry")

@@ -25,6 +25,7 @@ from .crop import (
 )
 from .image_loader import LoadedPhoto
 from .models import SizeMM
+from .ui_scale import UiMetrics, metrics_for_screen
 
 
 class CropCanvas(QWidget):
@@ -34,8 +35,18 @@ class CropCanvas(QWidget):
     HANDLE_HIT_RADIUS = 16.0
     MIN_FRAME_PIXELS = 30.0
 
-    def __init__(self, photo: LoadedPhoto, target_size: SizeMM, parent=None) -> None:
+    def __init__(
+        self,
+        photo: LoadedPhoto,
+        target_size: SizeMM,
+        parent=None,
+        ui_metrics: UiMetrics | None = None,
+    ) -> None:
         super().__init__(parent)
+        self._ui_metrics = ui_metrics or metrics_for_screen(parent.screen() if parent else None)
+        self.HANDLE_SIZE = float(self._ui_metrics.px(11, 8))
+        self.HANDLE_HIT_RADIUS = float(self._ui_metrics.px(16, 12))
+        self.MIN_FRAME_PIXELS = float(self._ui_metrics.px(30, 22))
         self._photo = photo
         self._target = target_size
         self._state = default_crop_state(
@@ -46,7 +57,7 @@ class CropCanvas(QWidget):
         self._interaction: str | None = None
         self._resize_direction = (1, 1)
         self._resize_opposite = QPointF()
-        self.setMinimumSize(520, 440)
+        self.setMinimumSize(self._ui_metrics.px(520), self._ui_metrics.px(440))
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
         self.setAccessibleName("Interactive crop area")
@@ -78,7 +89,7 @@ class CropCanvas(QWidget):
         )
 
     def _fitted_image_rect(self) -> QRectF:
-        margin = 34.0
+        margin = float(self._ui_metrics.px(34))
         available_width = max(1.0, self.width() - margin * 2.0)
         available_height = max(1.0, self.height() - margin * 2.0)
         scale = min(
@@ -299,14 +310,19 @@ class CropEditorDialog(QDialog):
         parent=None,
     ) -> None:
         super().__init__(parent)
+        if parent is not None and hasattr(parent, "ui_metrics"):
+            self._ui_metrics = parent.ui_metrics
+        else:
+            self._ui_metrics = metrics_for_screen(parent.screen() if parent else None)
+        px = self._ui_metrics.px
         self.setWindowTitle("Crop / Adjust")
         self.setModal(True)
-        self.resize(820, 760)
-        self.setMinimumSize(640, 600)
+        self.resize(px(820), px(760))
+        self.setMinimumSize(px(640), px(600))
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(12)
+        layout.setContentsMargins(px(18), px(18), px(18), px(18))
+        layout.setSpacing(px(12))
         instruction = QLabel(
             "Drag inside the frame to move it · Drag blue corners to resize · "
             "Drag outside the frame or right-drag to move the image"
@@ -314,17 +330,20 @@ class CropEditorDialog(QDialog):
         instruction.setWordWrap(True)
         layout.addWidget(instruction)
 
-        self.canvas = CropCanvas(photo, target_size)
+        self.canvas = CropCanvas(photo, target_size, ui_metrics=self._ui_metrics)
         layout.addWidget(self.canvas, 1)
 
         footer = QHBoxLayout()
         reset = QPushButton("Reset")
+        reset.setFixedHeight(self._ui_metrics.control_height)
         reset.clicked.connect(self.reset_crop)
         footer.addWidget(reset)
         footer.addStretch()
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
+        for button in buttons.buttons():
+            button.setFixedHeight(self._ui_metrics.control_height)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         footer.addWidget(buttons)

@@ -20,11 +20,17 @@ class PreviewWidget(QWidget):
         self._photo: LoadedPhoto | None = None
         self._crop_state = CropState()
         self._validation_error: str | None = None
+        self._ui_scale = 1.0
         self._render_cache_key: tuple[object, ...] | None = None
         self._render_cache: tuple[QImage, RenderPlan] | None = None
         self.setMinimumSize(440, 520)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setAccessibleName("Paper layout preview")
+
+    def set_ui_scale(self, scale: float) -> None:
+        self._ui_scale = max(0.5, scale)
+        self._invalidate_render()
+        self.update()
 
     def _invalidate_render(self) -> None:
         self._render_cache_key = None
@@ -88,7 +94,7 @@ class PreviewWidget(QWidget):
             return
 
         layout = self._layout()
-        margin = 28.0
+        margin = 28.0 * self._ui_scale
         available_width = max(1.0, self.width() - margin * 2)
         available_height = max(1.0, self.height() - margin * 2)
         scale = min(available_width / layout.paper.width, available_height / layout.paper.height)
@@ -100,7 +106,11 @@ class PreviewWidget(QWidget):
 
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(0, 0, 0, 28))
-        painter.drawRoundedRect(page_rect.translated(4, 5), 3, 3)
+        painter.drawRoundedRect(
+            page_rect.translated(4 * self._ui_scale, 5 * self._ui_scale),
+            3 * self._ui_scale,
+            3 * self._ui_scale,
+        )
         painter.setBrush(QColor("#ffffff"))
         painter.drawRect(page_rect)
 
