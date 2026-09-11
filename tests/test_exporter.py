@@ -14,13 +14,15 @@ from photo_print_layout.exporter import (
     export_jpeg,
     paper_pixel_size,
     render_paper_canvas,
+    pixels_for_mm,
 )
 from photo_print_layout.image_loader import LoadedPhoto, load_photo
+from photo_print_layout.layout import calculate_layout
 from photo_print_layout.models import (
     LayoutSettings,
-    Orientation,
     Position,
     ResizeMode,
+    SizeMM,
     SUPER_A3,
 )
 
@@ -40,7 +42,7 @@ class ExporterTests(unittest.TestCase):
     def test_300_dpi_dimensions_follow_true_physical_paper(self):
         self.assertEqual(paper_pixel_size(LayoutSettings()), (3508, 4961))
         self.assertEqual(
-            paper_pixel_size(LayoutSettings(orientation=Orientation.LANDSCAPE)),
+            paper_pixel_size(LayoutSettings(photo_size_mm=SizeMM(14 * 25.4, 11 * 25.4))),
             (4961, 3508),
         )
         self.assertEqual(
@@ -55,6 +57,12 @@ class ExporterTests(unittest.TestCase):
         self.assertNotEqual(
             canvas.pixelColor(canvas.width() // 2, canvas.height() // 2), QColor("white")
         )
+
+    def test_custom_photo_size_converts_to_exact_300_dpi_target_pixels(self):
+        settings = LayoutSettings(photo_size_mm=SizeMM(10 * 25.4, 12 * 25.4))
+        layout = calculate_layout(settings, 100, 200)
+        self.assertEqual(pixels_for_mm(layout.target.width, settings.dpi), 3000)
+        self.assertEqual(pixels_for_mm(layout.target.height, settings.dpi), 3600)
 
     def test_crop_export_uses_selected_source_crop(self):
         photo = colored_photo()

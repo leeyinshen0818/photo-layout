@@ -117,7 +117,9 @@ class CropUiTests(unittest.TestCase):
         self.window.set_photo(dummy_photo("first.png"))
         self.window._crop_state = smaller_crop()
         self.window.set_photo(dummy_photo("second.png"))
-        self.assertEqual(self.window._crop_state, default_crop_state(200, 400, 11, 14))
+        self.assertEqual(
+            self.window._crop_state, default_crop_state(200, 400, 279.4, 355.6)
+        )
 
     def test_dialog_has_no_zoom_controls_and_reset_restores_default(self):
         dialog = CropEditorDialog(
@@ -125,7 +127,7 @@ class CropUiTests(unittest.TestCase):
         )
         self.assertFalse(hasattr(dialog, "zoom_slider"))
         dialog.reset_crop()
-        self.assertEqual(dialog.crop_state, default_crop_state(200, 400, 11, 14))
+        self.assertEqual(dialog.crop_state, default_crop_state(200, 400, 279.4, 355.6))
         dialog.close()
 
     def test_crop_frame_can_move_resize_and_image_can_pan(self):
@@ -182,7 +184,7 @@ class CropUiTests(unittest.TestCase):
         self.window.set_photo(dummy_photo())
         preserved = (
             self.window._settings.paper,
-            self.window._settings.photo_size,
+            self.window._settings.photo_size_mm,
             self.window._settings.position,
             self.window._settings.resize_mode,
             self.window._settings.dpi,
@@ -198,7 +200,7 @@ class CropUiTests(unittest.TestCase):
             preserved,
             (
                 self.window._settings.paper,
-                self.window._settings.photo_size,
+                self.window._settings.photo_size_mm,
                 self.window._settings.position,
                 self.window._settings.resize_mode,
                 self.window._settings.dpi,

@@ -19,6 +19,12 @@ class PhysicalLayout:
     source: SourceRect | None
 
 
+def photo_fits_on_paper(settings: LayoutSettings) -> bool:
+    paper = settings.paper_size_mm
+    photo = settings.photo_size_mm
+    return photo.width <= paper.width and photo.height <= paper.height
+
+
 def calculate_layout(
     settings: LayoutSettings,
     source_width: int | None = None,
@@ -29,7 +35,7 @@ def calculate_layout(
 
     paper_size = settings.paper_size_mm
     target_size = settings.photo_size_mm
-    if target_size.width > paper_size.width or target_size.height > paper_size.height:
+    if not photo_fits_on_paper(settings):
         raise ValueError("The selected photo size does not fit on the selected paper")
 
     if settings.position is Position.LEFT_TOP:

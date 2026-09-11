@@ -18,6 +18,7 @@ class PreviewWidget(QWidget):
         self._settings = LayoutSettings()
         self._photo: LoadedPhoto | None = None
         self._crop_state = CropState()
+        self._validation_error: str | None = None
         self.setMinimumSize(440, 520)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setAccessibleName("Paper layout preview")
@@ -32,6 +33,10 @@ class PreviewWidget(QWidget):
 
     def set_crop_state(self, crop_state: CropState) -> None:
         self._crop_state = crop_state
+        self.update()
+
+    def set_validation_error(self, message: str | None) -> None:
+        self._validation_error = message
         self.update()
 
     def _layout(self) -> PhysicalLayout:
@@ -50,6 +55,11 @@ class PreviewWidget(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         painter.fillRect(self.rect(), QColor("#eef1f5"))
+
+        if self._validation_error:
+            painter.setPen(QColor("#b42318"))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self._validation_error)
+            return
 
         layout = self._layout()
         margin = 28.0

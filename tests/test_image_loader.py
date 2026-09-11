@@ -15,6 +15,7 @@ from photo_print_layout.models import (
     LayoutSettings,
     Orientation,
     ResizeMode,
+    SizeMM,
     layout_orientation_for_dimensions,
 )
 
@@ -56,14 +57,16 @@ class ImageLoaderTests(unittest.TestCase):
             Image.new("RGB", (40, 20), "green").save(path)
             loaded = load_photo(path)
             orientation = layout_orientation_for_dimensions(loaded.width, loaded.height)
+            self.assertEqual(orientation, Orientation.LANDSCAPE)
+            landscape_target = SizeMM(14 * 25.4, 11 * 25.4)
 
             crop = calculate_layout(
-                LayoutSettings(resize_mode=ResizeMode.CROP, orientation=orientation),
+                LayoutSettings(resize_mode=ResizeMode.CROP, photo_size_mm=landscape_target),
                 loaded.width,
                 loaded.height,
             )
             fit = calculate_layout(
-                LayoutSettings(resize_mode=ResizeMode.FIT, orientation=orientation),
+                LayoutSettings(resize_mode=ResizeMode.FIT, photo_size_mm=landscape_target),
                 loaded.width,
                 loaded.height,
             )
