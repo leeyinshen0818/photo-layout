@@ -94,6 +94,9 @@ class ExporterTests(unittest.TestCase):
             self.assertEqual(reader.size(), QSize(3508, 4961))
             reader.setFileName("")
             del reader
+            with Image.open(output) as rendered:
+                self.assertAlmostEqual(rendered.info["dpi"][0], 300, delta=1)
+                self.assertAlmostEqual(rendered.info["dpi"][1], 300, delta=1)
             self.assertEqual(before, hashlib.sha256(source.read_bytes()).digest())
 
     def test_export_refuses_to_overwrite_original_source(self):

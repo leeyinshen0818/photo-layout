@@ -56,11 +56,13 @@ class CropUiTests(unittest.TestCase):
         self.assertFalse(self.window.crop_button.isEnabled())
         self.assertFalse(self.window.clear_button.isEnabled())
         self.assertFalse(self.window.output_button.isEnabled())
+        self.assertFalse(self.window.output_button.property("outputActive"))
 
     def test_crop_control_requires_crop_mode_and_photo(self):
         self.window.set_photo(dummy_photo())
         self.assertTrue(self.window.clear_button.isEnabled())
         self.assertTrue(self.window.output_button.isEnabled())
+        self.assertTrue(self.window.output_button.property("outputActive"))
         self.assertFalse(self.window.crop_button.isEnabled())
         self._select_mode(ResizeMode.CROP)
         self.assertTrue(self.window.crop_button.isEnabled())
@@ -196,6 +198,7 @@ class CropUiTests(unittest.TestCase):
         self.assertEqual(self.window.photo_info.text(), "No photo selected")
         self.assertFalse(self.window.clear_button.isEnabled())
         self.assertFalse(self.window.output_button.isEnabled())
+        self.assertFalse(self.window.output_button.property("outputActive"))
         self.assertEqual(
             preserved,
             (

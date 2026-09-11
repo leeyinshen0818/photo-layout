@@ -200,12 +200,13 @@ class MainWindow(QMainWindow):
 
         self.output_button = QPushButton("Output JPEG…")
         self.output_button.setObjectName("outputButton")
+        self.output_button.setProperty("outputActive", False)
         self.output_button.setEnabled(False)
         self.output_button.clicked.connect(self.output_jpeg)
         controls_layout.addWidget(self.output_button)
         controls_layout.addStretch()
 
-        phase_note = QLabel("Phase 3.1 · Paper-aware sizing\nPrinting remains unavailable.")
+        phase_note = QLabel("Phase 4 · Print-accurate rendering\nPrinting remains unavailable.")
         phase_note.setObjectName("phaseNote")
         phase_note.setWordWrap(True)
         controls_layout.addWidget(phase_note)
@@ -347,7 +348,11 @@ class MainWindow(QMainWindow):
         self.size_error.setVisible(not valid)
         self.preview.set_validation_error(message)
         self.clear_button.setEnabled(self._photo is not None)
-        self.output_button.setEnabled(self._photo is not None and valid)
+        output_enabled = self._photo is not None and valid
+        self.output_button.setEnabled(output_enabled)
+        self.output_button.setProperty("outputActive", output_enabled)
+        self.output_button.style().unpolish(self.output_button)
+        self.output_button.style().polish(self.output_button)
         self._update_crop_button()
 
     def _update_max_size_label(self) -> None:
@@ -517,6 +522,10 @@ class MainWindow(QMainWindow):
             QPushButton#cropButton { background: #e8ebef; color: #9299a4; border: 1px solid #d8dde4; border-radius: 6px; padding: 7px 10px; font-weight: 600; }
             QPushButton#cropButton[cropActive="true"]:enabled { background: #246bfd; color: white; border-color: #246bfd; }
             QPushButton#cropButton[cropActive="true"]:enabled:hover { background: #1758d5; }
+            QPushButton#outputButton { background: #e8ebef; color: #9299a4; border: 1px solid #d8dde4; border-radius: 6px; padding: 9px 12px; font-weight: 700; }
+            QPushButton#outputButton[outputActive="true"]:enabled { background: #246bfd; color: white; border-color: #246bfd; }
+            QPushButton#outputButton[outputActive="true"]:enabled:hover { background: #1758d5; }
+            QPushButton#outputButton[outputActive="true"]:enabled:pressed { background: #1248af; }
             QComboBox { background: white; border: 1px solid #cbd1d9; border-radius: 5px; padding: 6px 8px; min-width: 135px; }
             QComboBox:hover { border-color: #8e98a7; }
             QComboBox#unitCombo { min-width: 0; max-width: 58px; padding-left: 6px; }

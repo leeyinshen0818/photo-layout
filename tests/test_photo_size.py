@@ -209,6 +209,7 @@ class PhotoSizeUiTests(unittest.TestCase):
         self.window.height_spin.setValue(400)
         self.assertFalse(self.window.size_error.isHidden())
         self.assertFalse(self.window.output_button.isEnabled())
+        self.assertFalse(self.window.output_button.property("outputActive"))
         self.assertFalse(self.window.crop_button.isEnabled())
         self.assertIsNotNone(self.window.preview._validation_error)
 
