@@ -7,8 +7,8 @@ from dataclasses import replace
 from math import isclose
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QKeySequence, QPalette, QScreen, QShowEvent
+from PySide6.QtCore import QByteArray, QSettings, QSignalBlocker, QSize, Qt, QTimer
+from PySide6.QtGui import QAction, QColor, QFontInfo, QKeySequence, QPalette, QScreen, QShowEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -36,7 +36,12 @@ from .layout import photo_fits_on_paper
 from .models import (
     DEFAULT_PHOTO_SIZE_MM,
     PAPER_SIZES,
+    PRESET_MATCH_TOLERANCE_MM,
+    SIZE_PRESETS,
+    STANDARD_A3,
+    SUPER_A3,
     LayoutSettings,
+    PaperSize,
     Position,
     ResizeMode,
     SizeMM,
@@ -47,7 +52,31 @@ from .models import (
     to_millimetres,
 )
 from .preview import PreviewWidget
-from .ui_scale import UiMetrics, metrics_for_screen
+from .toggle_switch import SwitchLabel, ToggleSwitch
+from .ui_scale import (
+    SCALE_CONFIG,
+    UiMetrics,
+    apply_size_limits,
+    combo_width_for,
+    control_height,
+    install_diagnostics,
+    metrics_for_screen,
+    restore_geometry_safely,
+    scale_result_for_screen,
+    scrollable_sidebar,
+    spin_width_for,
+    text_height,
+    title_bar_height,
+)
+
+
+PAPER_CHOICE_DEFAULT = "default"
+PAPER_CHOICE_AUTO = "auto"
+PAPER_CHOICE_USER = "user"
+PAPER_AUTO_SWITCH_SUFFIX = " · switched to A3+"
+RULER_VISIBLE_KEY = "preview/rulerVisible"
+WINDOW_GEOMETRY_KEY = "windowGeometry"
+SIZE_SAMPLE_TEXT = "888.88"  # widest value the size boxes must show unclipped
 
 
 class PhysicalSizeSpinBox(QDoubleSpinBox):
@@ -58,27 +87,37 @@ class PhysicalSizeSpinBox(QDoubleSpinBox):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, ui_metrics: UiMetrics | None = None) -> None:
+    def __init__(
+        self,
+        ui_metrics: UiMetrics | None = None,
+        *,
+        preferences: QSettings | None = None,
+    ) -> None:
         super().__init__()
         self._ui_metrics_override = ui_metrics is not None
         self._ui_metrics = ui_metrics or metrics_for_screen()
+        self._control_height = self._ui_metrics.control_height
         self._screen_signal_connected = False
         self._settings = LayoutSettings()
         self._photo: LoadedPhoto | None = None
         self._crop_state: CropState | None = None
         self._crop_aspect_ratio: float | None = None
         self._display_unit = Unit.INCHES
+        # "default": app-chosen A3; "auto": upgraded to A3+ to fit the size (reverts);
+        # "user": picked by the user (never changed automatically).
+        self._paper_choice = PAPER_CHOICE_DEFAULT
         self._updating_size_controls = False
         self._crop_reset_timer = QTimer(self)
         self._crop_reset_timer.setSingleShot(True)
         self._crop_reset_timer.setInterval(250)
         self._crop_reset_timer.timeout.connect(self._commit_crop_aspect_change)
-        self._preferences = QSettings()
+        # Injectable so tests can use an isolated settings file.
+        self._preferences = preferences if preferences is not None else QSettings()
 
         self.setWindowTitle("Photo Print Layout Manager")
         self._build_ui()
+        self.diagnostics = install_diagnostics(self, extra=self._diagnostic_rows)
         self._apply_ui_metrics(self._ui_metrics)
-        self._restore_window_geometry()
 
     def _build_ui(self) -> None:
         central = QWidget()
@@ -125,6 +164,17 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.photo_info)
 
         controls_layout.addWidget(self._section_label("Photo Size"))
+        self.size_preset_combo = QComboBox()
+        self.size_preset_combo.setObjectName("sizePresetCombo")
+        self.size_preset_combo.setAccessibleName("Quick photo size")
+        self.size_preset_combo.setPlaceholderText("Quick size…")
+        for preset in SIZE_PRESETS:
+            self.size_preset_combo.addItem(preset.label, preset)
+        self.size_preset_combo.setCurrentIndex(-1)
+        # activated fires only for user picks (including re-picking the shown preset),
+        # never for the programmatic sync below.
+        self.size_preset_combo.activated.connect(self._preset_selected)
+        controls_layout.addWidget(self.size_preset_combo)
         size_grid = QGridLayout()
         self._size_grid = size_grid
         self.width_spin = PhysicalSizeSpinBox()
@@ -152,19 +202,41 @@ class MainWindow(QMainWindow):
         size_grid.addWidget(self.height_spin, 1, 2)
         size_grid.addWidget(self.unit_combo, 1, 3)
         controls_layout.addLayout(size_grid)
+        # One status line: "Max: …" (info colour plus a suffix after an automatic switch
+        # to A3+), replaced by the error row when the size does not fit.
         self.max_size_label = QLabel()
         self.max_size_label.setObjectName("maxSizeLabel")
+        self.max_size_label.setProperty("autoSwitched", False)
+        self.max_size_label.setWordWrap(True)
         controls_layout.addWidget(self.max_size_label)
         self.size_error = QLabel()
         self.size_error.setObjectName("sizeError")
-        self.size_error.setWordWrap(True)
+        self.size_error.setWordWrap(True)  # wraps beside the button when space is short
         self.size_error.hide()
-        controls_layout.addWidget(self.size_error)
+        self.switch_paper_button = QPushButton("Switch to A3+")
+        self.switch_paper_button.setObjectName("switchPaperButton")
+        self.switch_paper_button.hide()
+        # A real combo change, so it is recorded as the user's own paper choice.
+        self.switch_paper_button.clicked.connect(
+            lambda: self.paper_combo.setCurrentIndex(self.paper_combo.findData(SUPER_A3))
+        )
+        size_status_row = QHBoxLayout()
+        self._size_status_row = size_status_row
+        size_status_row.setContentsMargins(0, 0, 0, 0)
+        size_status_row.addWidget(self.size_error, 1)
+        size_status_row.addWidget(
+            self.switch_paper_button, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        controls_layout.addLayout(size_status_row)
+        for spin in (self.width_spin, self.height_spin):
+            spin.setProperty("sizeInvalid", False)
         self._configure_size_inputs(self._display_unit)
         self._set_size_controls_from_mm(self._settings.photo_size_mm)
         self._update_max_size_label()
-        self.width_spin.valueChanged.connect(self._photo_size_changed)
-        self.height_spin.valueChanged.connect(self._photo_size_changed)
+        # Each box owns exactly one dimension; the other is never read back from a
+        # rounded display value.
+        self.width_spin.valueChanged.connect(lambda _value: self._photo_size_changed("width"))
+        self.height_spin.valueChanged.connect(lambda _value: self._photo_size_changed("height"))
         self.unit_combo.currentIndexChanged.connect(self._unit_changed)
 
         form = QFormLayout()
@@ -174,7 +246,7 @@ class MainWindow(QMainWindow):
         self.paper_combo = QComboBox()
         for paper in PAPER_SIZES:
             self.paper_combo.addItem(paper.label, paper)
-        self.paper_combo.currentIndexChanged.connect(self._controls_changed)
+        self.paper_combo.currentIndexChanged.connect(self._paper_changed_by_user)
         form.addRow("Paper", self.paper_combo)
 
         self.position_combo = QComboBox()
@@ -209,7 +281,7 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.output_button)
         controls_layout.addStretch()
 
-        phase_note = QLabel("Phase 5 · Responsive visual polish\nPrinting remains unavailable.")
+        phase_note = QLabel("Printing remains unavailable.")
         phase_note.setObjectName("phaseNote")
         phase_note.setWordWrap(True)
         controls_layout.addWidget(phase_note)
@@ -220,13 +292,50 @@ class MainWindow(QMainWindow):
         self._preview_layout = preview_layout
         preview_heading = QLabel("Preview")
         preview_heading.setObjectName("previewHeading")
-        preview_layout.addWidget(preview_heading)
+        self.preview_caption = QLabel()
+        self.preview_caption.setObjectName("previewCaption")
+        self.preview_caption.setProperty("sizeInvalid", False)
+        self.preview_caption.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.preview_caption.setAccessibleName("Photo and paper size")
+        self.ruler_button = ToggleSwitch()
+        self.ruler_button.setObjectName("rulerToggle")
+        self.ruler_button.setToolTip("Show/hide rulers")
+        self.ruler_button.setAccessibleName("Ruler")
+        self.ruler_label = SwitchLabel("Ruler", self.ruler_button)
+        self.ruler_label.setObjectName("rulerLabel")
+        ruler_row = QHBoxLayout()
+        self._ruler_row = ruler_row
+        ruler_row.setContentsMargins(0, 0, 0, 0)
+        ruler_row.addWidget(self.ruler_label)
+        ruler_row.addWidget(self.ruler_button)
+        preview_header = QHBoxLayout()
+        self._preview_header = preview_header
+        preview_header.setContentsMargins(0, 0, 0, 0)
+        preview_header.addWidget(preview_heading)
+        preview_header.addStretch(1)
+        preview_header.addLayout(ruler_row)
+        preview_header.addWidget(self.preview_caption)
+        preview_layout.addLayout(preview_header)
         self.preview = PreviewWidget()
+        self.preview.set_display_unit(self._display_unit)
         preview_layout.addWidget(self.preview, 1)
+        ruler_visible = self._preferences.value(RULER_VISIBLE_KEY, True, type=bool)
+        self.ruler_button.setChecked(ruler_visible)
+        self.preview.set_ruler_visible(ruler_visible)
+        self.ruler_button.toggled.connect(self._ruler_toggled)
 
-        root.addWidget(controls)
+        # The panel keeps its fixed width; it scrolls only when a screen is too short.
+        self._sidebar = scrollable_sidebar(controls, self._ui_metrics.sidebar_width)
+        root.addWidget(self._sidebar)
         root.addWidget(preview_panel, 1)
         self.setCentralWidget(central)
+        # Create the status bar now (not on the first message) so the window minimum
+        # and the scale's chrome allowance always include it.
+        self.statusBar()
+        self._sync_preset_combo()
+        self._refresh_size_labels()
 
         open_action = QAction("Open Photo", self)
         open_action.setShortcut(QKeySequence.StandardKey.Open)
@@ -257,6 +366,43 @@ class MainWindow(QMainWindow):
             f"{self._settings.position.value} · {self._settings.resize_mode.value}"
         )
 
+    def _paper_changed_by_user(self) -> None:
+        # Code-driven changes are signal-blocked, so any change arriving here is the user's.
+        self._paper_choice = PAPER_CHOICE_USER
+        self._controls_changed()
+
+    def _set_paper_programmatically(self, paper: PaperSize) -> None:
+        with QSignalBlocker(self.paper_combo):
+            self.paper_combo.setCurrentIndex(self.paper_combo.findData(paper))
+        self._settings = replace(self._settings, paper=paper)
+
+    def _reconcile_paper(self) -> None:
+        """Pick the smallest fitting paper unless the user chose the paper."""
+
+        if self._paper_choice == PAPER_CHOICE_USER:
+            return
+        if photo_fits_on_paper(replace(self._settings, paper=STANDARD_A3)):
+            if self._paper_choice == PAPER_CHOICE_AUTO:
+                self._set_paper_programmatically(STANDARD_A3)
+                self._paper_choice = PAPER_CHOICE_DEFAULT
+        elif photo_fits_on_paper(replace(self._settings, paper=SUPER_A3)):
+            if self._settings.paper != SUPER_A3:
+                self._set_paper_programmatically(SUPER_A3)
+            self._paper_choice = PAPER_CHOICE_AUTO
+        # Too large even for A3+: leave the paper alone; validation shows the error.
+
+    def _size_problem_message(self) -> str | None:
+        """Return the oversize error for the current size, or None when it fits."""
+
+        if photo_fits_on_paper(self._settings):
+            return None
+        if photo_fits_on_paper(replace(self._settings, paper=SUPER_A3)):
+            limit = self._settings.paper  # a smaller paper the user chose
+        else:
+            limit = SUPER_A3
+        maximum = limit.size_mm.for_orientation(self._settings.layout_orientation)
+        return f"Too large for {limit.short_name} (max {self._format_size(maximum)})"
+
     def _configure_size_inputs(self, unit: Unit) -> None:
         decimals = 1 if unit is Unit.MILLIMETRES else 2
         step = {Unit.INCHES: 0.25, Unit.CENTIMETRES: 0.1, Unit.MILLIMETRES: 1.0}[unit]
@@ -266,6 +412,12 @@ class MainWindow(QMainWindow):
             spin.setDecimals(decimals)
             spin.setRange(minimum, maximum)
             spin.setSingleStep(step)
+
+    def _ruler_toggled(self, checked: bool) -> None:
+        """Show or hide the preview rulers; no layout, crop, or paper state changes."""
+
+        self.preview.set_ruler_visible(checked)
+        self._preferences.setValue(RULER_VISIBLE_KEY, checked)
 
     def _set_size_controls_from_mm(self, size: SizeMM) -> None:
         self._updating_size_controls = True
@@ -287,17 +439,32 @@ class MainWindow(QMainWindow):
             self.height_spin.setValue(from_millimetres(self._settings.photo_size_mm.height, unit))
         finally:
             self._updating_size_controls = False
+        self.preview.set_display_unit(unit)
         self.statusBar().showMessage(f"Photo size shown in {unit.value}", 2500)
-        self._update_max_size_label()
+        self._refresh_size_labels()
 
-    def _photo_size_changed(self) -> None:
+    def _photo_size_changed(self, dimension: str) -> None:
+        """Apply one edited size box without re-reading the other (rounded) box."""
+
         if self._updating_size_controls:
             return
-        size = SizeMM(
-            to_millimetres(self.width_spin.value(), self._display_unit),
-            to_millimetres(self.height_spin.value(), self._display_unit),
-        )
+        current = self._settings.photo_size_mm
+        if dimension == "width":
+            size = SizeMM(to_millimetres(self.width_spin.value(), self._display_unit), current.height)
+        else:
+            size = SizeMM(current.width, to_millimetres(self.height_spin.value(), self._display_unit))
+        self._apply_photo_size(size, immediate_crop=False)
+
+    def _apply_photo_size(self, size: SizeMM, *, immediate_crop: bool) -> None:
+        """Install an exact millimetre photo size and update dependent state.
+
+        ``immediate_crop`` commits an aspect-ratio crop reset now (discrete actions
+        such as presets) instead of after the typing debounce.
+        """
+
         self._settings = replace(self._settings, photo_size_mm=size)
+        self._reconcile_paper()
+        self._sync_preset_combo()
         self.preview.set_settings(self._settings)
 
         if self._photo is not None:
@@ -308,10 +475,43 @@ class MainWindow(QMainWindow):
                 if self._crop_state is not None:
                     self.preview.set_crop_state(self._crop_state)
                 self._crop_reset_timer.stop()
+            elif immediate_crop:
+                self._crop_reset_timer.stop()
+                self._commit_crop_aspect_change()
             else:
                 self.preview.set_crop_state(self._default_crop_for_current_size())
                 self._crop_reset_timer.start()
         self._update_size_validity()
+
+    def _preset_selected(self, index: int) -> None:
+        """Apply a preset's exact size, oriented like the photo; the unit is unchanged."""
+
+        preset = self.size_preset_combo.itemData(index) if index >= 0 else None
+        if preset is None:
+            return
+        if self._photo is not None:
+            orientation = layout_orientation_for_dimensions(self._photo.width, self._photo.height)
+        else:
+            orientation = self._settings.layout_orientation
+        size = preset.size_mm.for_orientation(orientation)
+        self._apply_photo_size(size, immediate_crop=True)
+        self._set_size_controls_from_mm(size)
+
+    def _sync_preset_combo(self) -> None:
+        """Show the preset matching the current size, or the placeholder if none does."""
+
+        current = sorted((self._settings.photo_size_mm.width, self._settings.photo_size_mm.height))
+        match = -1
+        for index, preset in enumerate(SIZE_PRESETS):
+            candidate = sorted((preset.size_mm.width, preset.size_mm.height))
+            if all(
+                abs(actual - expected) <= PRESET_MATCH_TOLERANCE_MM
+                for actual, expected in zip(current, candidate)
+            ):
+                match = index
+                break
+        with QSignalBlocker(self.size_preset_combo):
+            self.size_preset_combo.setCurrentIndex(match)
 
     def _commit_crop_aspect_change(self) -> None:
         if self._photo is None:
@@ -347,12 +547,14 @@ class MainWindow(QMainWindow):
         return self._default_crop_for_current_size()
 
     def _update_size_validity(self) -> None:
-        self._update_max_size_label()
+        """Show the fit state: fits, auto-switched to A3+, too large for A3, too large for A3+."""
+
+        self._refresh_size_labels()
         valid = photo_fits_on_paper(self._settings)
-        message = None if valid else "Photo size is larger than the selected paper."
-        self.size_error.setText(message or "")
-        self.size_error.setVisible(not valid)
-        self.preview.set_validation_error(message)
+        fits_super_a3 = photo_fits_on_paper(replace(self._settings, paper=SUPER_A3))
+        self.switch_paper_button.setVisible(not valid and fits_super_a3)
+        for spin in (self.width_spin, self.height_spin):
+            self._set_style_flag(spin, "sizeInvalid", not valid)
         self.clear_button.setEnabled(self._photo is not None)
         output_enabled = self._photo is not None and valid
         self.output_button.setEnabled(output_enabled)
@@ -361,15 +563,48 @@ class MainWindow(QMainWindow):
         self.output_button.style().polish(self.output_button)
         self._update_crop_button()
 
+    def _format_size(self, size: SizeMM) -> str:
+        """Format an exact millimetre size in the current display unit."""
+
+        unit = self._display_unit
+        width = format_physical_value(from_millimetres(size.width, unit), unit)
+        height = format_physical_value(from_millimetres(size.height, unit), unit)
+        return f"{width} × {height} {unit.value}"
+
     def _update_max_size_label(self) -> None:
-        paper = self._settings.paper_size_mm
-        width = from_millimetres(paper.width, self._display_unit)
-        height = from_millimetres(paper.height, self._display_unit)
-        self.max_size_label.setText(
-            f"Max: {format_physical_value(width, self._display_unit)} × "
-            f"{format_physical_value(height, self._display_unit)} "
-            f"{self._display_unit.value}"
+        auto_switched = self._paper_choice == PAPER_CHOICE_AUTO and photo_fits_on_paper(
+            self._settings
         )
+        text = f"Max: {self._format_size(self._settings.paper_size_mm)}"
+        self.max_size_label.setText(text + (PAPER_AUTO_SWITCH_SUFFIX if auto_switched else ""))
+        self._set_style_flag(self.max_size_label, "autoSwitched", auto_switched)
+
+    def _refresh_size_labels(self) -> None:
+        """Refresh every size readout that depends on the display unit."""
+
+        self._update_max_size_label()
+        message = self._size_problem_message()
+        fits = message is None
+        self.size_error.setText(message or "")
+        self.size_error.setVisible(not fits)
+        # The error states the same maximum, so the Max line gives way to the error row.
+        self.max_size_label.setVisible(fits)
+        self.preview.set_validation_error(message)
+        self.preview_caption.setText(
+            f"Photo {self._format_size(self._settings.photo_size_mm)} · "
+            f"{self._settings.paper.short_name} paper"
+        )
+        self._set_style_flag(self.preview_caption, "sizeInvalid", not fits)
+
+    @staticmethod
+    def _set_style_flag(widget: QWidget, name: str, value: bool) -> None:
+        """Set a stylesheet-driven property and re-polish only when it changes."""
+
+        if widget.property(name) == value:
+            return
+        widget.setProperty(name, value)
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
 
     def _size_summary(self) -> str:
         return (
@@ -397,9 +632,12 @@ class MainWindow(QMainWindow):
 
         self._photo = photo
         self._crop_reset_timer.stop()
+        self._reset_resize_mode()
         orientation = layout_orientation_for_dimensions(photo.width, photo.height)
         default_size = DEFAULT_PHOTO_SIZE_MM.for_orientation(orientation)
         self._settings = replace(self._settings, photo_size_mm=default_size)
+        self._reconcile_paper()
+        self._sync_preset_combo()
         self._set_size_controls_from_mm(default_size)
         target = self._settings.photo_size_mm
         self._crop_state = default_crop_state(
@@ -413,13 +651,22 @@ class MainWindow(QMainWindow):
         self.preview.set_crop_state(self._crop_state)
         self._update_size_validity()
 
+    def _reset_resize_mode(self) -> None:
+        """Return Resize Mode to Fit Inside without triggering control signals."""
+
+        with QSignalBlocker(self.resize_combo):
+            self.resize_combo.setCurrentIndex(self.resize_combo.findData(ResizeMode.FIT))
+        self._settings = replace(self._settings, resize_mode=ResizeMode.FIT)
+
     def clear_photo(self) -> None:
-        """Clear only image-specific state, preserving user layout selections."""
+        """Clear image-specific state and Resize Mode, preserving other selections."""
 
         self._photo = None
         self._crop_state = None
         self._crop_aspect_ratio = None
         self._crop_reset_timer.stop()
+        self._reset_resize_mode()
+        self._sync_preset_combo()
         self.photo_info.setText("No photo selected")
         self.photo_info.setToolTip("")
         self.preview.set_photo(None)
@@ -512,9 +759,8 @@ class MainWindow(QMainWindow):
 
         self._ui_metrics = metrics
         px = metrics.px
-        if resize_window:
-            self.resize(px(900), px(700))
-        self.setMinimumSize(px(785), px(735))
+        # Style first: every size measured from text below uses the styled fonts.
+        self._apply_style()
         self._root_layout.setContentsMargins(
             metrics.outer_margin,
             metrics.outer_margin,
@@ -522,7 +768,8 @@ class MainWindow(QMainWindow):
             metrics.outer_margin,
         )
         self._root_layout.setSpacing(metrics.outer_margin)
-        self._controls_panel.setFixedWidth(metrics.sidebar_width)
+        self._sidebar.set_scrollbar_width(px(10, 8))
+        self._sidebar.set_content_width(metrics.sidebar_width)
         self._controls_layout.setContentsMargins(
             metrics.panel_padding,
             metrics.panel_padding,
@@ -540,32 +787,47 @@ class MainWindow(QMainWindow):
         self._size_grid.setHorizontalSpacing(px(6))
         self._size_grid.setVerticalSpacing(px(3))
         self._form_layout.setContentsMargins(0, px(5), 0, 0)
-        self._form_layout.setVerticalSpacing(px(13))
+        self._form_layout.setVerticalSpacing(px(8))
+        self._size_status_row.setSpacing(metrics.compact_spacing)
         self._preview_layout.setContentsMargins(0, 0, 0, 0)
         self._preview_layout.setSpacing(metrics.compact_spacing)
-        self.width_spin.setFixedWidth(px(70))
-        self.height_spin.setFixedWidth(px(70))
-        self.unit_combo.setFixedWidth(px(58))
         self.preview.setMinimumSize(px(440), px(520))
         self.preview.set_ui_scale(metrics.scale)
-        self.photo_info.setMinimumHeight(px(42))
+        self._preview_header.setSpacing(metrics.compact_spacing)
+        # A compact switch, deliberately smaller than control_height, in the heading row.
+        self._ruler_row.setSpacing(px(4))
+        self.ruler_button.set_track_size(px(34, 26), px(18, 14), px(3, 2))
 
-        controls = (
-            self.findChildren(QPushButton)
-            + self.findChildren(QComboBox)
-            + self.findChildren(QDoubleSpinBox)
+        # Sizes from real text, never smaller than the scaled design sizes.
+        self._control_height = control_height(
+            self.paper_combo, padding=px(6, 4), minimum=metrics.control_height
         )
-        for widget in controls:
-            widget.setFixedHeight(metrics.control_height)
+        for widget in self._app_controls():
+            widget.setFixedHeight(self._control_height)
+        for spin in (self.width_spin, self.height_spin):
+            spin.setFixedWidth(max(px(70), spin_width_for(spin, [SIZE_SAMPLE_TEXT])))
+        self.unit_combo.setFixedWidth(
+            max(px(58), combo_width_for(self.unit_combo, [unit.value for unit in Unit]))
+        )
+        self.photo_info.setMinimumHeight(text_height(self.photo_info) + 2 * px(9) + 2)
 
-        self._apply_style()
         for combo in self.findChildren(QComboBox):
             combo.setSizeAdjustPolicy(
                 QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
             )
             combo.setMinimumContentsLength(4)
-            combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            if combo is not self.unit_combo:
+                texts = [combo.itemText(i) for i in range(combo.count())]
+                combo.setMinimumWidth(combo_width_for(combo, texts + [combo.placeholderText()]))
+                combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self._style_combo_popup(combo)
+
+        # Window limits never exceed the screen; the sidebar scrolls instead of squeezing.
+        apply_size_limits(
+            self,
+            QSize(px(785), px(600)),
+            initial=QSize(px(900), px(700)) if resize_window else None,
+        )
 
     def _style_combo_popup(self, combo: QComboBox) -> None:
         """Force a light popup palette even when Windows uses a dark menu theme."""
@@ -613,6 +875,9 @@ class MainWindow(QMainWindow):
             QLabel#subtitle {{ color: #687180; font-size: {px(12, 9)}px; }}
             QLabel#sectionLabel, QLabel#previewHeading {{ font-size: {px(13, 10)}px; font-weight: 700; }}
             QLabel#previewHeading {{ font-size: {px(16, 12)}px; }}
+            QLabel#previewCaption {{ color: #596273; font-size: {px(12, 9)}px; font-weight: 600; }}
+            QLabel#previewCaption[sizeInvalid="true"] {{ color: #b42318; }}
+            QLabel#rulerLabel {{ color: #687180; font-size: {px(12, 9)}px; font-weight: 600; }}
             QLabel#photoInfo {{ background: #f4f6f8; border-radius: {metrics.radius}px; padding: {px(9)}px; color: #596273; }}
             QLabel#fixedValue {{ padding: {px(5)}px {px(2)}px; color: #3e4652; }}
             QLabel#phaseNote {{ color: #7b8492; font-size: {px(11, 9)}px; }}
@@ -634,20 +899,41 @@ class MainWindow(QMainWindow):
             QPushButton#outputButton[outputActive="true"]:enabled:hover {{ background: #1758d5; }}
             QPushButton#outputButton[outputActive="true"]:enabled:pressed {{ background: #1248af; }}
             QComboBox, QDoubleSpinBox {{ background: white; color: #20242b; border: 1px solid #cbd1d9; border-radius: {px(5)}px; padding: 0 {px(8)}px; selection-background-color: #dce8ff; selection-color: #173b7a; }}
-            QComboBox {{ min-width: {px(105)}px; padding-right: {px(28)}px; }}
+            QComboBox {{ padding-right: {px(28)}px; }}
             QComboBox:hover {{ border-color: #8e98a7; }}
             QComboBox:focus {{ border-color: #6f9cff; }}
             QComboBox:disabled, QDoubleSpinBox:disabled {{ background: #eef0f3; color: #9aa1ab; border-color: #dde1e6; }}
             QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: top right; width: {px(26)}px; border: 0; border-left: 1px solid #e1e5ea; }}
             QComboBox::down-arrow {{ image: url("{arrow_url}"); width: {px(10)}px; height: {px(6)}px; }}
-            QComboBox#unitCombo {{ min-width: 0; max-width: {px(58)}px; padding-left: {px(6)}px; padding-right: {px(20)}px; }}
+            QComboBox#unitCombo {{ min-width: 0; padding-left: {px(6)}px; padding-right: {px(20)}px; }}
             QDoubleSpinBox:focus {{ border-color: #246bfd; }}
+            QDoubleSpinBox[sizeInvalid="true"] {{ border-color: #b42318; }}
+            QDoubleSpinBox[sizeInvalid="true"]:focus {{ border-color: #b42318; }}
+            QLabel#maxSizeLabel[autoSwitched="true"] {{ color: #1d4f9e; }}
             QAbstractItemView {{ background: #ffffff; color: #20242b; border: 1px solid #cbd1d9; selection-background-color: #e7efff; selection-color: #173b7a; outline: 0; }}
             QStatusBar {{ background: #ffffff; color: #687180; font-size: {px(11, 9)}px; }}
             """
         )
 
-    def _screen_changed(self, screen: QScreen) -> None:
+    def _app_controls(self) -> list[QWidget]:
+        """Buttons, combos, and spin boxes of the app (the diagnostics overlay sizes itself)."""
+
+        controls = (
+            self.findChildren(QPushButton)
+            + self.findChildren(QComboBox)
+            + self.findChildren(QDoubleSpinBox)
+        )
+        return [widget for widget in controls if not self.diagnostics.isAncestorOf(widget)]
+
+    @property
+    def control_height(self) -> int:
+        """Height of every push button, combo, and spin box (design size or text, larger)."""
+
+        return self._control_height
+
+    def _screen_changed(self, screen: QScreen | None) -> None:
+        """Re-apply metrics for the window's screen (on show and when moved to another monitor)."""
+
         if not self._ui_metrics_override:
             self._apply_ui_metrics(metrics_for_screen(screen), resize_window=False)
 
@@ -660,11 +946,46 @@ class MainWindow(QMainWindow):
         if handle and not self._ui_metrics_override:
             self._screen_changed(handle.screen())
 
-    def _restore_window_geometry(self) -> None:
-        geometry = self._preferences.value("windowGeometry")
-        if geometry:
-            self.restoreGeometry(geometry)
+    def saved_geometry(self) -> QByteArray | None:
+        geometry = self._preferences.value(WINDOW_GEOMETRY_KEY)
+        return geometry if geometry else None
+
+    def _restore_window_geometry(self) -> bool:
+        """Restore the saved geometry only if it still fits a connected screen."""
+
+        return restore_geometry_safely(self, self.saved_geometry())
+
+    def _diagnostic_rows(self) -> list[tuple[str, str]]:
+        """App-specific lines for the Ctrl+Shift+D overlay."""
+
+        result = scale_result_for_screen(self.screen())
+        metrics = self._ui_metrics
+        panel = self._controls_panel
+        rendered = QFontInfo(self.paper_combo.font())
+        sidebar = (
+            f"{panel.minimumSizeHint().height()} / {self._sidebar.viewport().height()} px"
+            + (" (scrolling)" if self._sidebar.scrollbar_visible else "")
+        )
+        return [
+            (
+                "UI scale raw / used",
+                f"{result.raw:.3f} / {result.used:.3f}" + (" (clamped)" if result.clamped else ""),
+            ),
+            (
+                "UI scale in use",
+                f"{metrics.scale:.3f}" + (" (fixed by caller)" if self._ui_metrics_override else ""),
+            ),
+            (
+                "Chrome allowance",
+                f"title {title_bar_height()} + status {SCALE_CONFIG.status_bar} px (Qt style metric)",
+            ),
+            ("Stylesheet font", f"Segoe UI {metrics.px(12, 9)} px (title {metrics.px(21, 15)} px)"),
+            ("Rendered font", f"{rendered.family()} {rendered.pixelSize()} px"),
+            ("Control height", f"{self._control_height} px (design {metrics.control_height} px)"),
+            ("Sidebar width", f"{panel.width()} px"),
+            ("Sidebar height need / have", sidebar),
+        ]
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API name
-        self._preferences.setValue("windowGeometry", self.saveGeometry())
+        self._preferences.setValue(WINDOW_GEOMETRY_KEY, self.saveGeometry())
         super().closeEvent(event)

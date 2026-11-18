@@ -1,9 +1,10 @@
-import os
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from qt_test_support import configure_offscreen
+
+configure_offscreen()  # offscreen Qt with real system fonts, before any QApplication
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QImage
@@ -15,7 +16,7 @@ from photo_print_layout.crop_dialog import CropEditorDialog
 from photo_print_layout.exporter import ExportError
 from photo_print_layout.image_loader import LoadedPhoto
 from photo_print_layout.main_window import MainWindow
-from photo_print_layout.models import LayoutSettings, Position, ResizeMode, SUPER_A3
+from photo_print_layout.models import LayoutSettings, Position, ResizeMode, SUPER_A3, Unit
 
 
 def dummy_photo(name: str = "photo.png", width: int = 200, height: int = 400) -> LoadedPhoto:
@@ -179,17 +180,18 @@ class CropUiTests(unittest.TestCase):
         self.assertAlmostEqual(frame.width() / frame.height(), 14 / 11)
         dialog.close()
 
-    def test_clear_removes_image_state_but_preserves_layout_selections(self):
+    def test_clear_resets_resize_mode_but_preserves_other_layout_selections(self):
         self.window.paper_combo.setCurrentIndex(self.window.paper_combo.findData(SUPER_A3))
         self.window.position_combo.setCurrentIndex(self.window.position_combo.findData(Position.CENTER))
-        self._select_mode(ResizeMode.CROP)
+        self.window.unit_combo.setCurrentIndex(self.window.unit_combo.findData(Unit.CENTIMETRES))
         self.window.set_photo(dummy_photo())
+        self._select_mode(ResizeMode.CROP)
         preserved = (
             self.window._settings.paper,
             self.window._settings.photo_size_mm,
             self.window._settings.position,
-            self.window._settings.resize_mode,
             self.window._settings.dpi,
+            self.window.unit_combo.currentData(),
         )
         self.window.clear_photo()
         self.assertIsNone(self.window._photo)
@@ -199,16 +201,34 @@ class CropUiTests(unittest.TestCase):
         self.assertFalse(self.window.clear_button.isEnabled())
         self.assertFalse(self.window.output_button.isEnabled())
         self.assertFalse(self.window.output_button.property("outputActive"))
+        self.assertEqual(self.window._settings.resize_mode, ResizeMode.FIT)
+        self.assertEqual(self.window.resize_combo.currentData(), ResizeMode.FIT)
         self.assertEqual(
             preserved,
             (
                 self.window._settings.paper,
                 self.window._settings.photo_size_mm,
                 self.window._settings.position,
-                self.window._settings.resize_mode,
                 self.window._settings.dpi,
+                self.window.unit_combo.currentData(),
             ),
         )
+
+    def test_resize_mode_resets_to_fit_on_clear_and_on_new_photo(self):
+        self.window.set_photo(dummy_photo("first.png"))
+        self._select_mode(ResizeMode.CROP)
+        self.window.clear_photo()
+        self.assertEqual(self.window.resize_combo.currentData(), ResizeMode.FIT)
+        self.assertEqual(self.window._settings.resize_mode, ResizeMode.FIT)
+
+        self.window.set_photo(dummy_photo("second.png"))
+        self._select_mode(ResizeMode.CROP)
+        self.assertTrue(self.window.crop_button.isEnabled())
+        self.window.set_photo(dummy_photo("third.png"))
+        self.assertEqual(self.window.resize_combo.currentData(), ResizeMode.FIT)
+        self.assertEqual(self.window._settings.resize_mode, ResizeMode.FIT)
+        self.assertEqual(self.window.preview._settings.resize_mode, ResizeMode.FIT)
+        self.assertFalse(self.window.crop_button.isEnabled())
 
     def test_output_uses_save_as_appends_jpg_and_reports_success(self):
         self.window.set_photo(dummy_photo())

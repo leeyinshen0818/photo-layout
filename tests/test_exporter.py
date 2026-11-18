@@ -3,6 +3,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from qt_test_support import configure_offscreen
+
+configure_offscreen()  # offscreen Qt with real system fonts, before any QApplication
+
 from PIL import Image
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QColor, QImage, QImageReader

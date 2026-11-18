@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from math import hypot
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPen, QResizeEvent
 from PySide6.QtWidgets import (
     QDialog,
@@ -25,12 +25,13 @@ from .crop import (
 )
 from .image_loader import LoadedPhoto
 from .models import SizeMM
-from .ui_scale import UiMetrics, metrics_for_screen
+from .ui_scale import UiMetrics, fit_to_screen, metrics_for_screen
+
+# Border thickness around a normal dialog, in logical px, on top of the caption.
+DIALOG_FRAME_ALLOWANCE = 8
 
 
 class CropCanvas(QWidget):
-    state_changed = Signal(object)
-
     HANDLE_SIZE = 11.0
     HANDLE_HIT_RADIUS = 16.0
     MIN_FRAME_PIXELS = 30.0
@@ -75,7 +76,6 @@ class CropCanvas(QWidget):
             self._target.height,
         )
         self._view_image_rect = None
-        self.state_changed.emit(self._state)
         self.update()
 
     def reset_crop(self) -> None:
@@ -241,7 +241,6 @@ class CropCanvas(QWidget):
             self._resize_to(event.position(), image)
 
         self._last_mouse = event.position()
-        self.state_changed.emit(self._state)
         self.update()
         event.accept()
 
@@ -315,10 +314,15 @@ class CropEditorDialog(QDialog):
         else:
             self._ui_metrics = metrics_for_screen(parent.screen() if parent else None)
         px = self._ui_metrics.px
+        control_height = getattr(parent, "control_height", self._ui_metrics.control_height)
         self.setWindowTitle("Crop / Adjust")
         self.setModal(True)
-        self.resize(px(820), px(760))
-        self.setMinimumSize(px(640), px(600))
+        # A normal (non-maximized) dialog also needs room for its frame.
+        screen = parent.screen() if parent is not None else None
+        frame = DIALOG_FRAME_ALLOWANCE
+        minimum = fit_to_screen(QSize(px(640), px(600)), screen, margin=frame)
+        self.setMinimumSize(minimum)
+        self.resize(fit_to_screen(QSize(px(820), px(760)), screen, margin=frame).expandedTo(minimum))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(px(18), px(18), px(18), px(18))
@@ -335,7 +339,7 @@ class CropEditorDialog(QDialog):
 
         footer = QHBoxLayout()
         reset = QPushButton("Reset")
-        reset.setFixedHeight(self._ui_metrics.control_height)
+        reset.setFixedHeight(control_height)
         reset.clicked.connect(self.reset_crop)
         footer.addWidget(reset)
         footer.addStretch()
@@ -343,7 +347,7 @@ class CropEditorDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         for button in buttons.buttons():
-            button.setFixedHeight(self._ui_metrics.control_height)
+            button.setFixedHeight(control_height)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         footer.addWidget(buttons)

@@ -37,6 +37,13 @@ class PaperSize:
     key: str
     label: str
     size_mm: SizeMM
+    short_label: str = ""
+
+    @property
+    def short_name(self) -> str:
+        """Compact name for captions and messages, e.g. ``A3+``."""
+
+        return self.short_label or self.label
 
 
 class Position(Enum):
@@ -97,11 +104,32 @@ def layout_orientation_for_dimensions(width: float, height: float) -> Orientatio
     return Orientation.PORTRAIT if orientation is Orientation.SQUARE else orientation
 
 
-STANDARD_A3 = PaperSize("a3", "Standard A3", SizeMM(297.0, 420.0))
-SUPER_A3 = PaperSize("a3_plus", "A3+ / Super A3", SizeMM(330.2, 482.6))
+STANDARD_A3 = PaperSize("a3", "Standard A3", SizeMM(297.0, 420.0), "A3")
+SUPER_A3 = PaperSize("a3_plus", "A3+ / Super A3", SizeMM(330.2, 482.6), "A3+")
 PAPER_SIZES = (STANDARD_A3, SUPER_A3)
 
 DEFAULT_PHOTO_SIZE_MM = SizeMM(279.4, 355.6)
+
+
+@dataclass(frozen=True)
+class SizePreset:
+    """A common print size, stored portrait in exact millimetres."""
+
+    key: str
+    label: str
+    size_mm: SizeMM
+
+
+# Labels are fixed shop wording in inches, independent of the display unit.
+SIZE_PRESETS = (
+    SizePreset("11x14", "11 × 14 in", SizeMM(279.4, 355.6)),
+    SizePreset("12x15", "12 × 15 in", SizeMM(304.8, 381.0)),
+    SizePreset("12x16", "12 × 16 in", SizeMM(304.8, 406.4)),
+    SizePreset("13x16", "13 × 16 in", SizeMM(330.2, 406.4)),
+    SizePreset("a3", "A3 (11.69 × 16.54 in)", SizeMM(297.0, 420.0)),
+    SizePreset("a3_plus", "A3+ (13 × 19 in)", SizeMM(330.2, 482.6)),
+)
+PRESET_MATCH_TOLERANCE_MM = 0.01
 
 
 @dataclass(frozen=True)

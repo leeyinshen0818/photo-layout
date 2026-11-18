@@ -1,7 +1,8 @@
-import os
 import unittest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from qt_test_support import configure_offscreen
+
+configure_offscreen()  # offscreen Qt with real system fonts, before any QApplication
 
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication

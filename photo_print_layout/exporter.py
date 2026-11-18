@@ -26,9 +26,7 @@ def ensure_jpeg_extension(path: str | Path) -> Path:
     output = Path(path)
     if output.suffix.lower() in (".jpg", ".jpeg"):
         return output
-    if output.suffix:
-        return output.with_suffix(".jpg")
-    return output.with_suffix(".jpg")
+    return output.with_suffix(".jpg")  # adds or replaces the suffix
 
 
 def render_paper_canvas(

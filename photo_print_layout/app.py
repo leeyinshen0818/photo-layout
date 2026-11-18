@@ -9,8 +9,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication, QIcon
 from PySide6.QtWidgets import QApplication
 
+from . import __version__
 from .main_window import MainWindow
 from .release_smoke import run_release_smoke_test
+from .ui_scale import restore_geometry_safely
 
 
 def _resolve_icon_path() -> Path:
@@ -38,6 +40,7 @@ def main() -> int:
     )
     app = QApplication(sys.argv)
     app.setApplicationName("Photo Print Layout Manager")
+    app.setApplicationVersion(__version__)
     app.setOrganizationName("Photo Print Layout Manager")
     app.setStyle("Fusion")
 
@@ -49,5 +52,8 @@ def main() -> int:
         return run_release_smoke_test()
 
     window = MainWindow()
+    # Always maximized (as before); the saved geometry only sets the restore size,
+    # and is ignored if it no longer fits a connected screen.
+    restore_geometry_safely(window, window.saved_geometry())
     window.showMaximized()
     return app.exec()
